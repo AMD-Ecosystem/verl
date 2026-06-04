@@ -32,7 +32,7 @@ from verl.single_controller.base.decorator import Dispatch, make_nd_compute_data
 from verl.trainer.distillation import distillation_ppo_loss, is_distillation_enabled
 from verl.utils import tensordict_utils as tu
 from verl.utils.config import omega_conf_to_dataclass
-from verl.utils.device import get_device_name, is_npu_available, set_expandable_segments
+from verl.utils.device import get_device_name, get_torch_device, is_npu_available, set_expandable_segments
 from verl.utils.distributed import initialize_global_process_group_ray, set_numa_affinity
 from verl.utils.flops_counter import FlopsCounter
 from verl.utils.import_utils import import_external_libs
@@ -714,7 +714,10 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         # 3. offload model to cpu
         if self.actor.engine.is_param_offload_enabled:
             self.actor.engine.to("cpu", model=True, optimizer=False, grad=False)
-        aggressive_empty_cache(force_sync=True)
+        if os.environ.get("VERL_AGGRESSIVE_EMPTY_CACHE", "1") == "1":
+            aggressive_empty_cache(force_sync=True)
+        else:
+            get_torch_device().empty_cache()
 
         # 4. resume kv_cache
         if self.config.rollout.free_cache_engine:
