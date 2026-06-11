@@ -11,7 +11,7 @@ verl on ROCm installation
 System requirements
 ====================================================================
 
-To use verl `0.6.0 <https://github.com/volcengine/verl/releases/tag/v0.6.0>`__, you need the following prerequisites:
+To use verl `0.7.1 <https://github.com/volcengine/verl/releases/tag/v0.7.1>`__, you need the following prerequisites:
 
 - **ROCm version:** `7.0.0 <https://rocm.docs.amd.com/en/docs-7.0.0/>`__
 - **Operating system:** Ubuntu 22.04
