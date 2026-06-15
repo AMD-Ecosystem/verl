@@ -1,4 +1,5 @@
-FROM ubuntu:22.04 AS ubuntu
+ARG BASE_IMAGE=ubuntu:22.04
+FROM ${BASE_IMAGE} AS ubuntu
 
 #
 # Install basic packages from OS distro
