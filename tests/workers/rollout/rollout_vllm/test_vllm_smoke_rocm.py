@@ -55,8 +55,26 @@ def test_vllm_rollout_smoke_rocm():
 
     import ray
 
+    # The vLLM rollout manages device visibility itself, so its ray workers (incl.
+    # the colocated CheckpointEngineWorker) require RAY_EXPERIMENTAL_NOSET_*_VISIBLE_DEVICES
+    # to be set; otherwise ray rewrites *_VISIBLE_DEVICES under the worker and the
+    # rollout worker init hits an unimplemented device path. A coverage harness that
+    # also runs CPU-only single_controller tests may clear these flags globally, so
+    # re-assert them for THIS rollout via the cluster runtime_env.
+    rollout_env = {
+        "VLLM_USE_V1": "1",
+        "TOKENIZERS_PARALLELISM": "false",
+        "RAY_EXPERIMENTAL_NOSET_HIP_VISIBLE_DEVICES": "1",
+        "RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES": "1",
+        "RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES": "1",
+    }
+    # Start from a clean cluster: when this test runs after other ray-using tests
+    # in the same session, a stale cluster would be reused and the runtime_env
+    # below silently ignored, breaking rollout worker init.
+    if ray.is_initialized():
+        ray.shutdown()
     ray.init(
-        runtime_env={"env_vars": {"VLLM_USE_V1": "1", "TOKENIZERS_PARALLELISM": "false"}},
+        runtime_env={"env_vars": rollout_env},
         ignore_reinit_error=True,
     )
     try:
