@@ -171,4 +171,5 @@ RUN pip install -U git+https://github.com/ISEEKYAN/mbridge.git && \
     pip install megatron-core==0.16.0 && \
     pip install mathruler && \
     pip install qwen_vl_utils && \
-    pip install flash-linear-attention
+    pip install flash-linear-attention && \
+    pip install fastapi==0.136.3
