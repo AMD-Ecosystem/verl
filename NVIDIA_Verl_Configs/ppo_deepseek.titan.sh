@@ -66,8 +66,6 @@ python3 -m verl.trainer.main_ppo  \
         critic.model.path=$MODEL_PATH \
         critic.model.enable_gradient_checkpointing=True \
         critic.ppo_micro_batch_size_per_gpu=$CRITIC_MICRO_BATCH_SIZE \
-        critic.model.fsdp_config.param_offload=False \
-        critic.model.fsdp_config.optimizer_offload=False \
         algorithm.kl_ctrl.kl_coef=0.001 \
         trainer.critic_warmup=0 \
         trainer.logger=['console'] \
