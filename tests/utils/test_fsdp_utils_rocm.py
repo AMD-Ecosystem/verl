@@ -23,8 +23,11 @@ Two groups:
    state stays isolated from the rest of the curated suite). It wraps a tiny
    Qwen2 model with fully_shard and exercises offload/load to CPU/GPU, the full
    state-dict collection, fsdp2 grad-norm clipping, and reshard-after-forward.
-   Genuinely multi-rank FSDP1 sharding paths are out of scope here -- they
-   belong to the multi-GPU coverage tier.
+
+3. A MULTI-GPU path (world_size=2, multi-GPU tier) covering genuine FSDP1
+   flat-param sharding across ranks plus parallel_load_safetensors (the
+   world_size>1 file-chunking branch) and parallel_init_module_fn meta-device
+   materialization.
 
 The point is COVERAGE of verl's own ROCm-relevant code, not numerical
 correctness, so assertions are intentionally light.
@@ -459,6 +462,81 @@ def test_parallel_load_safetensors():
         )
         rendezvous_file = os.path.join(ckpt_dir, "rdzv_safetensors")
         mp.spawn(fn=_parallel_safetensors_worker, args=(rendezvous_file, ckpt_dir), nprocs=1, join=True)
+
+
+class _SimpleNet(nn.Module):
+    """Module-level (picklable for spawn) net whose param names are saved to a
+    safetensors checkpoint and materialized via parallel_init_module_fn."""
+
+    def __init__(self):
+        super().__init__()
+        self.fc1 = nn.Linear(16, 16)
+        self.fc2 = nn.Linear(16, 8)
+
+
+def _fsdp_multirank_worker(rank, world_size, rendezvous_file, ckpt_dir):
+    import torch.distributed as dist
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+    from verl.utils.device import get_device_name, get_nccl_backend, get_torch_device
+    from verl.utils.fsdp_utils import (
+        fsdp_version,
+        get_fsdp_full_state_dict,
+        load_fsdp_model_to_gpu,
+        meta_device_init,
+        offload_fsdp_model_to_cpu,
+        parallel_init_module_fn,
+        parallel_load_safetensors,
+    )
+
+    get_torch_device().set_device(rank)
+    dist.init_process_group(
+        backend=get_nccl_backend(), init_method=f"file://{rendezvous_file}", rank=rank, world_size=world_size
+    )
+    try:
+        # Genuine multi-rank FSDP1 sharding: flat-param is split across ranks.
+        plain = nn.Sequential(nn.Linear(32, 32), nn.ReLU(), nn.Linear(32, 16)).to(get_device_name())
+        model = FSDP(plain, device_id=get_torch_device().current_device())
+        assert fsdp_version(model) == 1
+        sd = get_fsdp_full_state_dict(model, offload_to_cpu=True, rank0_only=True)
+        assert isinstance(sd, dict)
+        offload_fsdp_model_to_cpu(model)
+        load_fsdp_model_to_gpu(model)
+
+        # parallel_load_safetensors world_size>1: this rank loads its file chunk;
+        # other ranks record the owning rank index for each param.
+        shard_states = parallel_load_safetensors(ckpt_dir)
+        assert isinstance(shard_states, dict)
+
+        # parallel_init_module_fn: materialize a meta-device copy from the shard
+        # states, broadcasting params from their owning rank.
+        with meta_device_init():
+            meta_model = _SimpleNet()
+        init_fn = parallel_init_module_fn(meta_model, shard_states)
+        init_fn(meta_model)
+        # all meta params should now be materialized on-device
+        assert not any(p.is_meta for p in meta_model.parameters())
+    finally:
+        dist.barrier()
+        dist.destroy_process_group()
+
+
+def test_fsdp_multirank_paths():
+    if not torch.cuda.is_available() or torch.cuda.device_count() < 2:
+        pytest.skip("needs >=2 GPUs")
+    pytest.importorskip("safetensors")
+
+    import tempfile
+
+    import torch.multiprocessing as mp
+    from safetensors.torch import save_file
+
+    with tempfile.TemporaryDirectory() as ckpt_dir:
+        # checkpoint param names must match _SimpleNet
+        net = _SimpleNet()
+        save_file(net.state_dict(), os.path.join(ckpt_dir, "model.safetensors"))
+        rendezvous_file = os.path.join(ckpt_dir, "rdzv_fsdp_mr")
+        mp.spawn(fn=_fsdp_multirank_worker, args=(2, rendezvous_file, ckpt_dir), nprocs=2, join=True)
 
 
 if __name__ == "__main__":
