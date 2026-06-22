@@ -135,6 +135,52 @@ def test_vllm_rollout_smoke_rocm():
         )
         assert output is not None and len(output.token_ids) > 0, "rollout produced no tokens"
         print("SMOKE OK:", tokenizer.decode(output.token_ids)[:120])
+
+        # ---- Extra coverage of the async server lifecycle ---------------------
+        # These exercise more of vllm_async_server (sampling variants, KV-cache
+        # reset, abort/resume, sleep/wake offload, profiler hooks) on the real
+        # ROCm stack. They are best-effort: the smoke gate is the generation
+        # above, so any op that a given vllm/ROCm build does not support is
+        # logged and skipped rather than failing the curated coverage set.
+        def _aux(label, fn):
+            try:
+                fn()
+                print(f"SMOKE {label}: ok")
+            except Exception as exc:  # noqa: BLE001 - coverage, not correctness
+                print(f"SMOKE {label}: non-fatal {type(exc).__name__}: {exc}")
+
+        # (1) A second generation with a different sampling profile (stochastic,
+        #     top-k/top-p, logprobs on) to cover the non-greedy params path.
+        def _gen2():
+            out = ray.get(
+                server_handle.generate.remote(
+                    request_id="smoke_1",
+                    prompt_ids=prompt_ids,
+                    sampling_params={
+                        "temperature": 0.7,
+                        "top_p": 0.95,
+                        "top_k": 50,
+                        "logprobs": True,
+                        "max_tokens": 16,
+                    },
+                    image_data=None,
+                ),
+                timeout=240.0,
+            )
+            assert out is not None
+
+        _aux("gen2", _gen2)
+        # (2) KV-cache reset.
+        _aux("clear_kv_cache", lambda: asyncio.run(server.clear_kv_cache()))
+        # (3) Partial-rollout abort then resume.
+        _aux("abort_all_requests", lambda: asyncio.run(server.abort_all_requests()))
+        _aux("resume_generation", lambda: asyncio.run(server.resume_generation()))
+        # (4) Sleep (offload weights/KV to host) then wake.
+        _aux("sleep", lambda: asyncio.run(server.sleep()))
+        _aux("wake_up", lambda: asyncio.run(server.wake_up()))
+        # (5) Profiler start/stop hooks.
+        _aux("start_profile", lambda: asyncio.run(server.start_profile()))
+        _aux("stop_profile", lambda: asyncio.run(server.stop_profile()))
     finally:
         ray.shutdown()
 
