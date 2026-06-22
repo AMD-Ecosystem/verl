@@ -147,6 +147,72 @@ def test_monkey_patch_compute_logits_masks_oov():
     assert not torch.isinf(logits[..., :4]).any()
 
 
+def test_extract_prompt_logprobs_topk_skips_out_of_rank():
+    # An entry whose rank exceeds num_prompt_logprobs (the sampled token not in
+    # the top-k) must be skipped via `continue`.
+    out = SimpleNamespace(
+        prompt_logprobs=[
+            None,
+            {"5": _lp(-0.1, 1), "9": _lp(-0.5, 2), "2": _lp(-3.0, 3)},
+        ]
+    )
+    result = {}
+    extract_prompt_logprobs(out, 2, result)
+    # only the two in-rank tokens are kept; the rank-3 entry is dropped
+    assert result["prompt_ids"][0] == [5, 9]
+
+
+def test_set_death_signal_non_linux_is_noop(monkeypatch):
+    import platform
+
+    from verl.workers.rollout.vllm_rollout.utils import set_death_signal
+
+    monkeypatch.setattr(platform, "system", lambda: "Darwin")
+    # Should return immediately without touching libc.
+    set_death_signal()
+
+
+def _call_set_death_signal_child():
+    # Runs in a forked child so the PR_SET_PDEATHSIG / potential self-SIGKILL
+    # (when ppid == 1) can never take down the pytest process itself.
+    from verl.workers.rollout.vllm_rollout.utils import set_death_signal
+
+    set_death_signal()
+
+
+def test_set_death_signal_linux_runs():
+    import platform
+
+    if platform.system() != "Linux":
+        pytest.skip("Linux-only path")
+    import multiprocessing as mp
+
+    # IMPORTANT: never call set_death_signal() in-process. Under the coverage
+    # container the entrypoint is PID 1, so the test process's ppid is 1 and
+    # set_death_signal() would os.kill(self, SIGKILL). Isolate it in a child
+    # (whose ppid is this process, not 1) so the prctl path is covered safely.
+    ctx = mp.get_context("fork")
+    p = ctx.Process(target=_call_set_death_signal_child)
+    p.start()
+    p.join(timeout=30)
+    assert p.exitcode == 0
+
+
+def test_get_device_uuid_torch_props_fallback():
+    # With no visible-device env var set, the ROCm fallback drops past the env
+    # loop into the torch device-properties / final-id path.
+    import os
+
+    saved = {k: os.environ.pop(k, None) for k in ("HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "CUDA_VISIBLE_DEVICES")}
+    try:
+        uuid = get_device_uuid(0)
+        assert isinstance(uuid, str) and uuid.startswith("ROCm-")
+    finally:
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v
+
+
 def test_suppress_signal_in_thread():
     with SuppressSignalInThread():
         # registering a signal handler from a non-main thread is a no-op

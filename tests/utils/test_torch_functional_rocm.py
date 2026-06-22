@@ -230,3 +230,35 @@ def test_compute_grad_norm():
     model(x).sum().backward()
     gn = tf.compute_grad_norm(model)
     assert gn >= 0
+
+
+def test_split_dict_tensor_into_batches():
+    from tensordict import TensorDict
+
+    td = TensorDict({"a": torch.arange(8).view(8, 1), "b": torch.randn(8, 3)}, batch_size=[8])
+    chunks = tf.split_dict_tensor_into_batches(td, batch_size=4)
+    assert len(chunks) == 2
+    assert all(c.batch_size[0] == 4 for c in chunks)
+
+
+def test_use_original_torch_compile_no_mindspeed():
+    # mindspeed is not installed in the ROCm tier; the contextmanager must fall
+    # back to a plain yield via its except branch.
+    with tf.use_original_torch_compile():
+        pass
+
+
+def test_tokenize_and_postprocess_data():
+    # Uses the tokenizer already cached for the rollout smoke test. Skips cleanly
+    # if the model/tokenizer is not present in the offline HF cache.
+    transformers = pytest.importorskip("transformers")
+    try:
+        tokenizer = transformers.AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
+    except Exception as exc:  # offline / not cached
+        pytest.skip(f"tokenizer unavailable: {exc}")
+    pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
+    input_ids, attention_mask = tf.tokenize_and_postprocess_data(
+        "hello world from rocm coverage", tokenizer, max_length=16, pad_token_id=pad_id, left_pad=True
+    )
+    assert input_ids.shape[-1] == 16
+    assert attention_mask.shape == input_ids.shape

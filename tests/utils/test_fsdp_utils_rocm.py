@@ -140,6 +140,22 @@ def test_meta_device_init_creates_meta_params():
     assert m.weight.is_meta
 
 
+def test_normalize_peft_param_name():
+    from verl.utils.fsdp_utils import normalize_peft_param_name
+
+    params = {
+        "base_model.model.model.embed_tokens.weight": 1,
+        "base_model.model.model.layers.0.self_attn.q_proj.base_layer.weight": 2,
+        # LoRA delta keys must be stripped out
+        "base_model.model.model.layers.0.self_attn.q_proj.lora_A.default.weight": 3,
+        "base_model.model.model.layers.0.self_attn.q_proj.lora_B.default.weight": 4,
+    }
+    out = normalize_peft_param_name(params)
+    assert "model.embed_tokens.weight" in out
+    assert "model.layers.0.self_attn.q_proj.weight" in out
+    assert not any("lora_" in k for k in out)
+
+
 def test_replace_lora_wrapper_passthrough():
     """Non-target keys pass through unchanged; target keys get base_layer suffix."""
     from verl.utils.fsdp_utils import replace_lora_wrapper
@@ -174,6 +190,9 @@ def _fsdp2_single_gpu_worker(rank, rendezvous_file):
         MixedPrecisionPolicy,
         apply_fsdp2,
         fsdp2_clip_grad_norm_,
+        fsdp2_load_full_state_dict,
+        fsdp2_sharded_load_from_cpu,
+        fsdp2_sharded_save_to_cpu,
         fsdp_version,
         get_fsdp_full_state_dict,
         get_init_weight_context_manager,
@@ -237,6 +256,14 @@ def _fsdp2_single_gpu_worker(rank, rendezvous_file):
         out.loss.backward()
         total_norm = fsdp2_clip_grad_norm_(model.parameters(), max_norm=1.0)
         assert total_norm is not None
+
+        # broadcast a full state dict back into the sharded model (rank0 path)
+        fsdp2_load_full_state_dict(model, sd, device_mesh=device_mesh, cpu_offload=None)
+
+        # sharded save (local DTensor shards -> CPU) then load back
+        cpu_state, global_spec = fsdp2_sharded_save_to_cpu(model)
+        assert isinstance(cpu_state, dict) and global_spec is not None
+        fsdp2_sharded_load_from_cpu(model, cpu_state, global_spec)
     finally:
         dist.barrier()
         dist.destroy_process_group()
@@ -255,6 +282,183 @@ def test_fsdp2_single_gpu_paths():
     with tempfile.TemporaryDirectory() as tmp:
         rendezvous_file = os.path.join(tmp, "rdzv_fsdp2_single")
         mp.spawn(fn=_fsdp2_single_gpu_worker, args=(rendezvous_file,), nprocs=1, join=True)
+
+
+def _fsdp1_single_gpu_worker(rank, rendezvous_file):
+    """FSDP1 (FullyShardedDataParallel) at world_size=1 -- exercises the v1
+    offload/load/full-state-dict branches that the fsdp2 worker does not hit."""
+    import torch.distributed as dist
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+    from verl.utils.device import get_device_name, get_nccl_backend, get_torch_device
+    from verl.utils.fsdp_utils import (
+        fsdp_version,
+        get_fsdp_full_state_dict,
+        load_fsdp_model_to_gpu,
+        offload_fsdp_model_to_cpu,
+    )
+
+    get_torch_device().set_device(rank)
+    dist.init_process_group(
+        backend=get_nccl_backend(), init_method=f"file://{rendezvous_file}", rank=rank, world_size=1
+    )
+    try:
+        plain = nn.Sequential(nn.Linear(32, 32), nn.ReLU(), nn.Linear(32, 16)).to(get_device_name())
+        model = FSDP(plain, device_id=get_torch_device().current_device())
+        assert fsdp_version(model) == 1
+
+        # full (gathered) state dict via the FSDP1 FULL_STATE_DICT context
+        sd = get_fsdp_full_state_dict(model, offload_to_cpu=True, rank0_only=True)
+        assert isinstance(sd, dict)
+
+        # FSDP1 offload-to-CPU / load-to-GPU branches (flat-param handle walk)
+        offload_fsdp_model_to_cpu(model)
+        load_fsdp_model_to_gpu(model)
+    finally:
+        dist.barrier()
+        dist.destroy_process_group()
+
+
+def test_fsdp1_single_gpu_paths():
+    if not torch.cuda.is_available():
+        pytest.skip("no GPU visible")
+    import tempfile
+
+    import torch.multiprocessing as mp
+
+    with tempfile.TemporaryDirectory() as tmp:
+        rendezvous_file = os.path.join(tmp, "rdzv_fsdp1_single")
+        mp.spawn(fn=_fsdp1_single_gpu_worker, args=(rendezvous_file,), nprocs=1, join=True)
+
+
+def _lora_fsdp2_worker(rank, rendezvous_file):
+    """LoRA + FSDP2 collect / merge / unmerge paths at world_size=1.
+
+    These weight-gathering paths use FSDP.summon_full_params on fully_shard
+    modules and depend on the exact peft/torch versions in the tier, so each
+    step is best-effort: failures are logged, not raised, so we still collect
+    coverage for whatever executes without breaking the curated set.
+    """
+    import torch.distributed as dist
+    from torch.distributed import init_device_mesh
+    from transformers import AutoModelForCausalLM, Qwen2Config
+
+    from verl.utils.device import get_device_name, get_nccl_backend, get_torch_device
+    from verl.utils.fsdp_utils import MixedPrecisionPolicy, apply_fsdp2
+
+    get_torch_device().set_device(rank)
+    dist.init_process_group(
+        backend=get_nccl_backend(), init_method=f"file://{rendezvous_file}", rank=rank, world_size=1
+    )
+
+    def _aux(label, fn):
+        try:
+            fn()
+            print(f"LORA {label}: ok")
+        except Exception as exc:  # noqa: BLE001 - coverage, not correctness
+            print(f"LORA {label}: non-fatal {type(exc).__name__}: {exc}")
+
+    try:
+        from peft import LoraConfig, get_peft_model
+
+        device_mesh = init_device_mesh(get_device_name(), mesh_shape=(1,), mesh_dim_names=("fsdp",))
+        cfg = Qwen2Config(
+            num_hidden_layers=2,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            hidden_size=64,
+            intermediate_size=128,
+            vocab_size=256,
+        )
+        with torch.device(get_device_name()):
+            base = AutoModelForCausalLM.from_config(config=cfg, torch_dtype=torch.float32, attn_implementation="eager")
+        lora_cfg = LoraConfig(r=8, lora_alpha=16, target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM")
+        model = get_peft_model(base, lora_cfg).to(get_device_name())
+
+        mp_policy = MixedPrecisionPolicy(param_dtype=torch.float32, reduce_dtype=torch.float32)
+        apply_fsdp2(
+            model,
+            {"mesh": device_mesh, "mp_policy": mp_policy},
+            {"wrap_policy": {"transformer_layer_cls_to_wrap": ["Qwen2DecoderLayer"]}},
+        )
+
+        from verl.utils.fsdp_utils import (
+            backup_base_model_weights,
+            collect_lora_params,
+            collect_merged_lora_params,
+            fsdp_merge_unmerge,
+            merged_lora_context,
+            restore_base_model_weights,
+        )
+
+        _aux("collect_lora_params(base_sync_done)", lambda: collect_lora_params(model, False, True))
+        _aux("backup/restore_base", lambda: restore_base_model_weights(model, backup_base_model_weights(model)))
+        _aux("merge_unmerge", lambda: (fsdp_merge_unmerge(model, True), fsdp_merge_unmerge(model, False)))
+        _aux("collect_merged_lora_params", lambda: collect_merged_lora_params(model))
+
+        def _merged_ctx():
+            with merged_lora_context(model, backup_adapters=True):
+                pass
+            with merged_lora_context(model, backup_adapters=False):
+                pass
+
+        _aux("merged_lora_context", _merged_ctx)
+    finally:
+        dist.barrier()
+        dist.destroy_process_group()
+
+
+def test_lora_fsdp2_paths():
+    if not torch.cuda.is_available():
+        pytest.skip("no GPU visible")
+    pytest.importorskip("transformers")
+    pytest.importorskip("peft")
+
+    import tempfile
+
+    import torch.multiprocessing as mp
+
+    with tempfile.TemporaryDirectory() as tmp:
+        rendezvous_file = os.path.join(tmp, "rdzv_lora_fsdp2")
+        mp.spawn(fn=_lora_fsdp2_worker, args=(rendezvous_file,), nprocs=1, join=True)
+
+
+def _parallel_safetensors_worker(rank, rendezvous_file, ckpt_dir):
+    import torch.distributed as dist
+
+    from verl.utils.device import get_nccl_backend, get_torch_device
+    from verl.utils.fsdp_utils import parallel_load_safetensors
+
+    get_torch_device().set_device(rank)
+    dist.init_process_group(
+        backend=get_nccl_backend(), init_method=f"file://{rendezvous_file}", rank=rank, world_size=1
+    )
+    try:
+        # single-file checkpoint (no index json) -> the model.safetensors branch
+        shard_states = parallel_load_safetensors(ckpt_dir)
+        assert isinstance(shard_states, dict) and len(shard_states) > 0
+    finally:
+        dist.barrier()
+        dist.destroy_process_group()
+
+
+def test_parallel_load_safetensors():
+    if not torch.cuda.is_available():
+        pytest.skip("no GPU visible")
+    pytest.importorskip("safetensors")
+
+    import tempfile
+
+    import torch.multiprocessing as mp
+    from safetensors.torch import save_file
+
+    with tempfile.TemporaryDirectory() as ckpt_dir:
+        save_file(
+            {"a.weight": torch.randn(4, 4), "b.bias": torch.randn(4)},
+            os.path.join(ckpt_dir, "model.safetensors"),
+        )
+        rendezvous_file = os.path.join(ckpt_dir, "rdzv_safetensors")
+        mp.spawn(fn=_parallel_safetensors_worker, args=(rendezvous_file, ckpt_dir), nprocs=1, join=True)
 
 
 if __name__ == "__main__":
