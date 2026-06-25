@@ -134,7 +134,7 @@ ENV NVTE_CK_V3_BF16_CVT=2
 ARG TE_TAG="386bd316"
 RUN pip install pybind11 && git clone https://github.com/ROCm/TransformerEngine.git && \
     cd TransformerEngine && git checkout ${TE_TAG} && git submodule update --init --recursive && \
-    GPU_ARCHS=${GPU_ARCH} MAX_JOBS=256 python3 setup.py install && \
+    GPU_ARCHS=${GPU_ARCH} MAX_JOBS=$(nproc) python3 setup.py install && \
     cd .. && rm -rf TransformerEngine
 # TE patch
 RUN FILE=$(find /usr/local/lib/python3.12/dist-packages/ -path "*transformer_engine*/transformer_engine/pytorch/attention/dot_product_attention/utils.py") && \
@@ -150,7 +150,7 @@ RUN pip install setuptools_scm && \
     ln -sf /opt/rocm/lib/libamdhip64.so /usr/lib/libamdhip64.so && \
     git clone https://github.com/vllm-project/vllm && \
     cd vllm && git checkout ${VLLM_TAG} && pip install -r requirements/rocm.txt && \
-    MAX_JOBS=64 python3 setup.py develop --no-deps
+    MAX_JOBS=$(nproc) python3 setup.py develop --no-deps
 RUN pip uninstall tilelang -y && pip install xgrammar==0.1.32
 
 RUN apt-get update && apt install vim -y
