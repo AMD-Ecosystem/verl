@@ -106,6 +106,7 @@ RUN git clone ${FA_REPO} \
  && git submodule update
 
 RUN cd flash-attention \
+ && printf '[BUILD-DIAG fa_build] nproc=%s cpu.max=%s %s\n' "$(nproc)" "$(cat /sys/fs/cgroup/cpu.max 2>/dev/null || cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us 2>/dev/null || echo NA)" "$(grep -E 'MemTotal|MemAvailable' /proc/meminfo | tr '\n' ' ')" \
  && GPU_ARCHS=${GPU_ARCH} BUILD_TARGET=rocm MAX_JOBS=$(nproc) python3 setup.py bdist_wheel \
  && mkdir /install && cp dist/*.whl /install
 
@@ -128,12 +129,17 @@ ENV NVTE_USE_ROCM=1
 ENV NVTE_FRAMEWORK=pytorch
 ENV NVTE_ROCM_ARCH=${GPU_ARCH}
 ENV NVTE_USE_CAST_TRANSPOSE_TRITON=0
+# Skip the from-source CK/AITER fused-attention build (the multi-hour ck_fused_attn
+# compile). Set as ENV so it also applies at runtime, where TE requires the same
+# flag for any backend disabled at compile time. AOTriton remains the fused-attn backend.
+ENV NVTE_FUSED_ATTN_CK=0
 ENV NVTE_CK_USES_BWD_V3=1
 ENV NVTE_CK_V3_BF16_CVT=2
 
 ARG TE_TAG="386bd316"
 RUN pip install pybind11 && git clone https://github.com/ROCm/TransformerEngine.git && \
     cd TransformerEngine && git checkout ${TE_TAG} && git submodule update --init --recursive && \
+    printf '[BUILD-DIAG te] nproc=%s cpu.max=%s %s\n' "$(nproc)" "$(cat /sys/fs/cgroup/cpu.max 2>/dev/null || cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us 2>/dev/null || echo NA)" "$(grep -E 'MemTotal|MemAvailable' /proc/meminfo | tr '\n' ' ')" && \
     GPU_ARCHS=${GPU_ARCH} MAX_JOBS=$(nproc) python3 setup.py install && \
     cd .. && rm -rf TransformerEngine
 # TE patch
@@ -145,12 +151,29 @@ RUN FILE=$(find /usr/local/lib/python3.12/dist-packages/ -path "*transformer_eng
 FROM te AS install_vllm
 
 ARG VLLM_TAG="1ff9d3353"
+# Cap vLLM compile parallelism: the vLLM/CSRC build is the most memory-hungry
+# step (each job ~2GB), and on high-core CI hosts $(nproc) (e.g. 256) can exhaust
+# RAM and OOM. Clamp to min(nproc, VLLM_MAX_JOBS) so it still scales down on
+# small runners. The last known-good CI build used 64.
+ARG VLLM_MAX_JOBS=64
 RUN pip install setuptools_scm && \
     mkdir /workspace && cd /workspace && \
     ln -sf /opt/rocm/lib/libamdhip64.so /usr/lib/libamdhip64.so && \
     git clone https://github.com/vllm-project/vllm && \
     cd vllm && git checkout ${VLLM_TAG} && pip install -r requirements/rocm.txt && \
-    MAX_JOBS=$(nproc) python3 setup.py develop --no-deps
+    VLLM_JOBS=$(n=$(nproc); cap=${VLLM_MAX_JOBS}; echo $(( n < cap ? n : cap ))) && \
+    printf '[BUILD-DIAG vllm] nproc=%s MAX_JOBS=%s cpu.max=%s %s\n' "$(nproc)" "${VLLM_JOBS}" "$(cat /sys/fs/cgroup/cpu.max 2>/dev/null || cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us 2>/dev/null || echo NA)" "$(grep -E 'MemTotal|MemAvailable' /proc/meminfo | tr '\n' ' ')" && \
+    MAX_JOBS=${VLLM_JOBS} python3 setup.py develop --no-deps
+# vLLM compat patch: env_override.py monkeypatches torch._dynamo for torch<2.12,
+# importing GraphCaptureOutput (PyTorch PR #177558) unconditionally. The pinned
+# ROCm torch wheel (2.9.1.dev20251204) predates that symbol, so the unguarded
+# import crashes every `import vllm`. Gate the block on the symbol actually
+# existing; the patch is a no-op once vLLM/torch ship a compatible pair.
+RUN F=/workspace/vllm/vllm/env_override.py && \
+    if grep -q 'if not is_torch_equal_or_newer("2.12.0"):' "$F"; then \
+        sed -i 's|if not is_torch_equal_or_newer("2.12.0"):|if not is_torch_equal_or_newer("2.12.0") and hasattr(__import__("torch._dynamo.convert_frame", fromlist=["GraphCaptureOutput"]), "GraphCaptureOutput"):|' "$F" && \
+        echo "[patch] vllm env_override GraphCaptureOutput guard applied"; \
+    else echo "[patch] vllm env_override guard line not found; skipping"; fi
 RUN pip uninstall tilelang -y && pip install xgrammar==0.1.32
 
 RUN apt-get update && apt install vim -y
@@ -163,7 +186,7 @@ RUN pip install cupy-rocm-7-0
 
 ENV MIOPEN_DEBUG_CONV_DIRECT=0
 ARG AITER_TAG="45c428e54"
-RUN cd /workspace && git clone --recursive https://github.com/ROCm/aiter.git && cd aiter && git checkout ${AITER_TAG} && python3 setup.py develop
+RUN cd /workspace && git clone --recursive https://github.com/ROCm/aiter.git && cd aiter && git checkout ${AITER_TAG} && printf '[BUILD-DIAG aiter] nproc=%s cpu.max=%s %s\n' "$(nproc)" "$(cat /sys/fs/cgroup/cpu.max 2>/dev/null || cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us 2>/dev/null || echo NA)" "$(grep -E 'MemTotal|MemAvailable' /proc/meminfo | tr '\n' ' ')" && MAX_JOBS=$(nproc) python3 setup.py develop
 
 # for qwen3.5
 RUN pip install -U git+https://github.com/ISEEKYAN/mbridge.git && \
