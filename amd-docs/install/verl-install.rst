@@ -13,12 +13,12 @@ System requirements
 
 To use verl `0.7.1 <https://github.com/volcengine/verl/releases/tag/v0.7.1>`__, you need the following prerequisites:
 
-- **ROCm version:** `7.0.0 <https://rocm.docs.amd.com/en/docs-7.0.0/>`__
+- **ROCm version:** `7.0.2 <https://rocm.docs.amd.com/en/docs-7.0.2/>`__
 - **Operating system:** Ubuntu 22.04
-- **GPU platform:** AMD Instinct™ MI300X
-- **PyTorch:** `2.9.0 <https://github.com/ROCm/pytorch/tree/release/2.9-rocm7.x-gfx115x>`__
+- **GPU platform:** AMD Instinct™ MI300X, MI308, MI325X, MI350X, or MI355X
+- **PyTorch:** `2.9.1 <https://github.com/ROCm/pytorch/tree/release/2.9-rocm7.x-gfx115x>`__
 - **Python:** `3.12 <https://www.python.org/downloads/release/python-31211/>`__
-- **vLLM:** `0.11.0 <https://github.com/vllm-project/vllm/releases/tag/v0.11.0>`__
+- **vLLM:** `0.20.2 <https://github.com/vllm-project/vllm/releases/tag/v0.20.2>`__
 
 Install verl
 ================================================================================
@@ -42,7 +42,7 @@ Prebuilt Docker images with verl configured for ROCm are available on `Docker Hu
 
    .. code-block:: bash
 
-      docker pull rocm/verl:verl-0.6.0.amd0_rocm7.0_vllm0.11.0.dev
+      docker pull rocm/verl:verl-release-v0.7.1amd0
 
 2. Launch and connect to the Docker container
 
@@ -61,7 +61,7 @@ Prebuilt Docker images with verl configured for ROCm are available on `Docker Hu
          -v "$HOME:$HOME" \
          --shm-size 128G \
          -w "$PWD" \
-         rocm/verl:verl-0.6.0.amd0_rocm7.0_vllm0.11.0.dev \
+         rocm/verl:verl-release-v0.7.1amd0 \
          /bin/bash
 
 .. _build-your-verl-rocm-docker-image:
@@ -118,4 +118,4 @@ Once connected to the Docker container, verify that verl is installed:
 .. code-block:: bash 
 
    pip list | grep verl
-   verl    0.3.0.post0        /app
+   verl    0.7.1        /app
