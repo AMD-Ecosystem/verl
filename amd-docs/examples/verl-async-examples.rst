@@ -15,18 +15,16 @@ Megatron example
 
 The `geo3k_qwen25vl_7b_megatron_4_4.sh <https://github.com/ROCm/verl/blob/main/verl/experimental/fully_async_policy/shell/geo3k_qwen25vl_7b_megatron_4_4.sh>`_ example launches fully asynchronous GRPO training for ``Qwen2.5-VL-7B-Instruct`` on the Geometry3k vision-math dataset using verl's fully asynchronous policy with the Megatron trainer configuration.
 
-1. Download  ``prepare_geo3k_qwen25vl_7b_megatron_4_4.sh`` from the `verl repository <https://github.com/ROCm/verl/>`_.
-
-2. Download the data and the model:
+1. Download `prepare_geo3k_qwen25vl_7b_megatron_4_4.sh <https://github.com/ROCm/verl/tree/amd-integration/verl/experimental/fully_async_policy/shell/data_model_preparation/prepare_geo3k_qwen25vl_7b_megatron_4_4.sh>`_ and run:
 
    .. code-block:: bash
 
       export HF_TOKEN=your_token
       # or: hf auth login
       cd /workspace/verl
-      bash prepare_geo3k_qwen25vl_7b_megatron_4_4.sh
+      bash verl/experimental/fully_async_policy/shell/data_model_preparation/prepare_geo3k_qwen25vl_7b_megatron_4_4.sh
 
-3. Run the example:
+2. Run the example:
 
    .. code-block:: bash
 
@@ -45,14 +43,14 @@ DAPO example
 The `dapo_7b_math_fsdp2_4_4.sh <https://github.com/ROCm/verl/blob/main/verl/experimental/fully_async_policy/shell/dapo_7b_math_fsdp2_4_4.sh>`__
 example launches fully asynchronous DAPO reinforcement learning training using ``Qwen2.5-Math-7B`` on math reasoning tasks.
 
-1. Download ``prepare_dapo_7b_math_fsdp2_4_4.sh`` from `the verl repository  <https://github.com/ROCm/verl/>`_ and run:
+1. Download `prepare_dapo_7b_math_fsdp2_4_4.sh <https://github.com/ROCm/verl/tree/amd-integration/verl/experimental/fully_async_policy/shell/data_model_preparation/prepare_dapo_7b_math_fsdp2_4_4.sh>`_ and run:
 
    .. code-block:: bash
 
       export HF_TOKEN=your_token
       # or: hf auth login
       cd /workspace/verl
-      bash prepare_dapo_7b_math_fsdp2_4_4.sh
+      bash verl/experimental/fully_async_policy/shell/data_model_preparation/prepare_dapo_7b_math_fsdp2_4_4.sh
 
 3. Run the example:
 
