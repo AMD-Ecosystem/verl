@@ -52,7 +52,7 @@ example launches fully asynchronous DAPO reinforcement learning training using `
       cd /workspace/verl
       bash verl/experimental/fully_async_policy/shell/data_model_preparation/prepare_dapo_7b_math_fsdp2_4_4.sh
 
-3. Run the example:
+2. Run the example:
 
    .. code-block:: bash
 
