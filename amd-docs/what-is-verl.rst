@@ -95,4 +95,3 @@ upstream, with AMD-specific container images and runtime.
 - Layouts span single-node jobs and multi-node clusters, including
   Slurm-managed Ray deployments.
 
-
