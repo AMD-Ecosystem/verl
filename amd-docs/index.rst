@@ -37,6 +37,7 @@ The verl public repository is located at `https://github.com/ROCm/verl <https://
   .. grid-item-card:: Examples
 
     * :doc:`Run a verl example <examples/verl-examples>`
+    * :doc:`Run fully asynchronous verl examples <examples/verl-async-examples>`    
 
   .. grid-item-card:: Reference
 

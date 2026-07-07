@@ -16,6 +16,8 @@ subtrees:
   entries:
   - file: examples/verl-examples.rst
     title: Run a verl example
+  - file: examples/verl-async-examples.rst
+    title: Run fully asynchronous verl examples
 
 - caption: Reference
   entries:
