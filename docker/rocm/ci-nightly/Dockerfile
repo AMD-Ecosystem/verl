@@ -1,5 +1,5 @@
 ARG VLLM_ROCM_TAG=nightly
-ARG VLLM_ROCM_REPO=vllm/vllm-openai-rocm
+ARG VLLM_ROCM_REPO=rocm/vllm-dev
 FROM ${VLLM_ROCM_REPO}:${VLLM_ROCM_TAG}
 
 SHELL ["/bin/bash", "-ceuxo", "pipefail"]
