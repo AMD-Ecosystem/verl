@@ -8,10 +8,13 @@
 Run fully asynchronous verl examples
 ********************************************************************
 
-This guide shows how to run fully asynchronous verl examples on AMD GPUs with ROCm. It covers data and model preparation, launching fully asynchronous GRPO training on a vision-language model with Megatron and fully asynchronous DAPO math reasoning training with FSDP2.
+This guide shows how to run fully asynchronous verl examples on AMD GPUs with ROCm.
+It covers preparing data and models, launching fully asynchronous GRPO training on a
+vision-language model with Megatron, and running fully asynchronous DAPO math
+reasoning training with FSDP2.
 
 Megatron example
---------------------
+--------------------------------------------------------------------
 
 The `geo3k_qwen25vl_7b_megatron_4_4.sh <https://github.com/ROCm/verl/blob/main/verl/experimental/fully_async_policy/shell/geo3k_qwen25vl_7b_megatron_4_4.sh>`_ example launches fully asynchronous GRPO training for ``Qwen2.5-VL-7B-Instruct`` on the Geometry3k vision-math dataset using verl's fully asynchronous policy with the Megatron trainer configuration.
 
@@ -38,7 +41,7 @@ The `geo3k_qwen25vl_7b_megatron_4_4.sh <https://github.com/ROCm/verl/blob/main/v
       :alt: Expected terminal output after geo3k_qwen25vl_7b_megatron_4_4.sh completes
 
 DAPO example
---------------------------------------------------
+--------------------------------------------------------------------
 
 The `dapo_7b_math_fsdp2_4_4.sh <https://github.com/ROCm/verl/blob/main/verl/experimental/fully_async_policy/shell/dapo_7b_math_fsdp2_4_4.sh>`__
 example launches fully asynchronous DAPO reinforcement learning training using ``Qwen2.5-Math-7B`` on math reasoning tasks.
@@ -64,8 +67,7 @@ example launches fully asynchronous DAPO reinforcement learning training using `
    .. image:: ../data/dapo_7b_math_fsdp2_4_4_complete.png
       :alt: Expected terminal output after dapo_7b_math_fsdp2_4_4.sh completes
 
-3. If you encounter out of memory issues, reduce ``max_position_embeddings`` in the ``config.json`` to 4096 and apply these changes in
-   ``dapo_7b_math_fsdp2_4_4.sh``:
+3. If you encounter out of memory issues, reduce ``max_position_embeddings`` in the ``config.json`` to 4096:
 
    .. code-block:: bash
 
@@ -78,6 +80,10 @@ example launches fully asynchronous DAPO reinforcement learning training using `
       with open(config_path, 'w') as f:
           json.dump(config, f, indent=2)
       "
+
+4. Apply these changes as overrides in ``dapo_7b_math_fsdp2_4_4.sh``:
+
+   .. code-block:: bash
 
       # line 55: default uses * 2
       actor_ppo_max_token_len=$((max_prompt_length + max_response_length))
@@ -93,3 +99,4 @@ example launches fully asynchronous DAPO reinforcement learning training using `
 
       # line 105: default is max_position_embeddings=32768
       +actor_rollout_ref.model.override_config.max_position_embeddings=4096 \
+
