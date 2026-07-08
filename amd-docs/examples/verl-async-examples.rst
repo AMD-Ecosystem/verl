@@ -32,7 +32,7 @@ The `geo3k_qwen25vl_7b_megatron_4_4.sh <https://github.com/ROCm/verl/blob/main/v
       cd /workspace/verl
       bash verl/experimental/fully_async_policy/shell/geo3k_qwen25vl_7b_megatron_4_4.sh
 
-   This example will take several hours to run. Once it has completed, its output should be similar to this output:
+   This example will take several hours to run. Once the example completes, the output should resemble the following:
 
    .. image:: ../data/geo3k_qwen25vl_7b_megatron_4_4_complete.png
       :alt: Expected terminal output after geo3k_qwen25vl_7b_megatron_4_4.sh completes
