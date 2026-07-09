@@ -58,6 +58,48 @@ def _check_vllm_version_for_sleep_level():
     return vs.parse(current_version) >= vs.parse(minver)
 
 
+def _should_expand_vllm_moe_params() -> bool:
+    current_version = get_version("vllm")
+    if not current_version:
+        return False
+
+    try:
+        return vs.parse(current_version) <= vs.parse("0.24.0")
+    except vs.InvalidVersion:
+        return False
+
+
+async def _iter_vllm_compatible_moe_params(weights):
+    """Expand Transformers 5 packed MoE expert tensors to vLLM checkpoint keys.
+
+    Transformers 5 stores Qwen-style MoE experts as packed 3D parameters:
+    ``mlp.experts.gate_up_proj`` with shape
+    ``[num_experts, 2 * intermediate_size, hidden_size]`` and
+    ``mlp.experts.down_proj`` with shape
+    ``[num_experts, hidden_size, intermediate_size]``. vLLM's Qwen MoE reload
+    path still accepts the original per-expert checkpoint keys during live
+    weight sync, so stream those keys without materializing a full dict.
+    """
+    from verl.workers.rollout.utils import ensure_async_iterator
+
+    async for name, tensor in ensure_async_iterator(weights):
+        if name.endswith(".mlp.experts.gate_up_proj") and tensor.dim() == 3:
+            gate, up = tensor.chunk(2, dim=1)
+            base = name.removesuffix(".gate_up_proj")
+            for expert_id in range(tensor.size(0)):
+                yield f"{base}.{expert_id}.gate_proj.weight", gate[expert_id].contiguous()
+                yield f"{base}.{expert_id}.up_proj.weight", up[expert_id].contiguous()
+            continue
+
+        if name.endswith(".mlp.experts.down_proj") and tensor.dim() == 3:
+            base = name.removesuffix(".down_proj")
+            for expert_id in range(tensor.size(0)):
+                yield f"{base}.{expert_id}.down_proj.weight", tensor[expert_id].contiguous()
+            continue
+
+        yield name, tensor
+
+
 class ServerAdapter(BaseRollout):
     """
     vLLM server adapter used in native async mode, serve as a client to request vLLM server
@@ -116,6 +158,16 @@ class ServerAdapter(BaseRollout):
                 ">= 25.3.rc1 and CANN toolkit version >= 8.3.RC1)"
             )
 
+    def _ensure_server_handle(self) -> bool:
+        """Lazy-init server handle. Returns False if this rank should not proceed."""
+        if self.rollout_rank != 0:
+            return False
+        # Lazy init http server adapter because http server is launched after hybrid engine.
+        if self.server_handle is None:
+            prefix = self._get_server_name_prefix()
+            self.server_handle = ray.get_actor(f"{prefix}server_{self.replica_rank}_{self.node_rank}")
+        return True
+
     async def _execute_method(
         self,
         method: str,
@@ -136,13 +188,8 @@ class ServerAdapter(BaseRollout):
         Returns:
             The result of the method execution, or None if non_block=True.
         """
-        if self.rollout_rank != 0:
+        if not self._ensure_server_handle():
             return None
-
-        # Lazy init http server adapter because http server is launched after hybrid engine.
-        if self.server_handle is None:
-            prefix = self._get_server_name_prefix()
-            self.server_handle = ray.get_actor(f"{prefix}server_{self.replica_rank}_{self.node_rank}")
 
         future = self.server_handle.collective_rpc.remote(method, timeout=timeout, args=args, kwargs=kwargs)
         return future if non_block else await future
@@ -153,13 +200,13 @@ class ServerAdapter(BaseRollout):
         Args:
             tags: weights or kv_cache.
         """
-        if self.config.free_cache_engine:
-            await self._execute_method("wake_up", kwargs={"tags": tags})
+        if self.config.free_cache_engine and self._ensure_server_handle():
+            await self.server_handle.wake_up.remote(tags=tags)
 
     async def release(self):
         """Release weights and kv cache in GPU memory."""
-        if self.config.free_cache_engine:
-            await self._execute_method("sleep", kwargs={"level": self.sleep_level})
+        if self.config.free_cache_engine and self._ensure_server_handle():
+            await self.server_handle.sleep.remote()
 
     @torch.no_grad()
     async def update_weights(
@@ -180,12 +227,16 @@ class ServerAdapter(BaseRollout):
             bucket_size_mb=bucket_size_mb,
             use_shm=self.use_shm,
         )
+        if _should_expand_vllm_moe_params() and not (
+            kwargs.get("peft_config") is not None and kwargs.get("base_sync_done", False)
+        ):
+            weights = _iter_vllm_compatible_moe_params(weights)
         await sender.async_send_weights(weights)
 
         if future is not None:
             await future
 
-        # reset prefix cache after updating weights
+        # reset caches after updating weights
         if self.rollout_rank == 0:
             await self.server_handle.clear_kv_cache.remote()
             if global_steps is not None:

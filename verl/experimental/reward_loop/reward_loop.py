@@ -23,7 +23,7 @@ from omegaconf import DictConfig, open_dict
 from ray.actor import ActorHandle
 from tensordict import TensorDict
 
-from verl.protocol import DataProto
+from verl.protocol import DataProto, pad_dataproto_to_divisor
 from verl.single_controller.ray.base import RayResourcePool
 from verl.trainer.ppo.reward import load_reward_manager, resolve_reward_manager_cls
 from verl.utils import hf_tokenizer
@@ -143,7 +143,6 @@ class RewardLoopWorker:
         return outputs
 
     async def compute_score(self, data: DataProto) -> dict:
-        assert len(data) == 1, "RewardLoopWorker only support single data item"
         if self.config.reward.custom_reward_function.path is not None:
             # directly use user-customized reward function
             return await self.reward_manager.run_single(data)
@@ -151,7 +150,7 @@ class RewardLoopWorker:
             if self.config.reward.reward_model.enable:
                 # we assume the rm is disrm
                 # genrm must set custom_reward_function
-                return await self.compute_score_disrm(data)
+                return await self.compute_score_disrm(data[-1:])
             else:
                 return await self.reward_manager.run_single(data)
 
@@ -325,7 +324,9 @@ class RewardLoopManager:
         if self.reward_model_manager is not None:
             self.reward_model_manager.wake_up()
 
-        chunks = data.chunk(len(self.reward_loop_workers))
+        num_workers = len(self.reward_loop_workers)
+        padded_data, pad_size = pad_dataproto_to_divisor(data, num_workers)
+        chunks = padded_data.chunk(num_workers)
         outputs = ray.get(
             [
                 worker.compute_score_batch.remote(chunk)
@@ -333,6 +334,8 @@ class RewardLoopManager:
             ]
         )
         outputs_flat = [item for sublist in outputs for item in sublist]
+        if pad_size > 0:
+            outputs_flat = outputs_flat[: len(data)]
 
         # compute rm score
         scores = [item["reward_score"] for item in outputs_flat]

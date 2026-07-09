@@ -16,7 +16,7 @@ import json
 import logging
 import os
 from enum import Enum
-from typing import Any
+from typing import Any, Optional
 from uuid import uuid4
 
 import torch
@@ -25,18 +25,25 @@ from PIL import Image
 from verl.experimental.agent_loop.agent_loop import (
     AgentLoopBase,
     AgentLoopOutput,
+    ToolListWrap,
     register,
 )
 from verl.experimental.agent_loop.tool_parser import FunctionCall, ToolParser
 from verl.experimental.agent_loop.utils import build_gpt_oss_tool_response_text
-from verl.tools.schemas import ToolResponse
-from verl.tools.utils.tool_registry import initialize_tools_from_config
+from verl.tools.function_tool import FunctionTool, normalize_function_tool_return
+from verl.tools.schemas import OpenAIFunctionCallSchema, OpenAIFunctionParsedSchema, ToolResponse
 from verl.utils.profiler import simple_timer
 from verl.utils.rollout_trace import rollout_trace_op
 from verl.workers.rollout.replica import TokenOutput
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
+
+SPEC_DECODE_EXTRA_KEYS = (
+    "spec_num_draft_tokens",
+    "spec_num_accepted_tokens",
+    "spec_num_verify_steps",
+)
 
 
 class AgentState(Enum):
@@ -55,6 +62,8 @@ class AgentData:
         messages: list[dict[str, Any]],
         image_data: list[Image.Image],
         video_data: list[tuple[torch.Tensor, dict[str, Any]]],
+        audio_data: Optional[list[Any]],
+        mm_processor_kwargs: Optional[dict[str, Any]],
         metrics: dict[str, Any],
         request_id: str,
         tools_kwargs: dict[str, Any],
@@ -62,6 +71,8 @@ class AgentData:
         self.messages = messages
         self.image_data = image_data
         self.video_data = video_data
+        self.audio_data = audio_data
+        self.mm_processor_kwargs = mm_processor_kwargs or {}
         self.metrics = metrics
         self.request_id = request_id
         self.tools_kwargs = tools_kwargs
@@ -87,17 +98,21 @@ class AgentData:
 
 @register("tool_agent")
 class ToolAgentLoop(AgentLoopBase):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, tools: Optional[ToolListWrap] = None, **kwargs):
+        """Initialize the tool agent loop.
+
+        Args:
+            tools: Tools to use for the tool agent loop.
+        """
         super().__init__(*args, **kwargs)
 
-        # Initialize tools from config file
         self.max_user_turns = self.rollout_config.multi_turn.max_user_turns
         self.max_assistant_turns = self.rollout_config.multi_turn.max_assistant_turns
         self.max_parallel_calls = self.rollout_config.multi_turn.max_parallel_calls
         self.max_tool_response_length = self.rollout_config.multi_turn.max_tool_response_length
         self.tool_response_truncate_side = self.rollout_config.multi_turn.tool_response_truncate_side
-        tool_config_path = self.rollout_config.multi_turn.tool_config_path
-        tool_list = initialize_tools_from_config(tool_config_path) if tool_config_path else []
+
+        tool_list = tools.tools if tools else []
         self.tools = {tool.name: tool for tool in tool_list}
         self.tool_schemas = [tool.tool_schema.model_dump(exclude_unset=True, exclude_none=True) for tool in tool_list]
         self.tool_parser = ToolParser.get_tool_parser(self.rollout_config.multi_turn.format, self.tokenizer)
@@ -110,10 +125,12 @@ class ToolAgentLoop(AgentLoopBase):
     async def run(self, sampling_params: dict[str, Any], **kwargs) -> AgentLoopOutput:
         messages = list(kwargs["raw_prompt"])
 
-        # extract images and videos from messages
-        multi_modal_data = await self.process_vision_info(messages)
+        # extract multimodal inputs from messages
+        multi_modal_data = await self.process_multi_modal_info(messages)
         images = multi_modal_data.get("images")
         videos = multi_modal_data.get("videos")
+        audios = multi_modal_data.get("audios")
+        mm_processor_kwargs = self._get_mm_processor_kwargs(audios)
 
         metrics = {}
         request_id = uuid4().hex
@@ -123,6 +140,8 @@ class ToolAgentLoop(AgentLoopBase):
             messages=messages,
             image_data=images,
             video_data=videos,
+            audio_data=audios,
+            mm_processor_kwargs=mm_processor_kwargs,
             metrics=metrics,
             request_id=request_id,
             tools_kwargs=tools_kwargs,
@@ -162,12 +181,15 @@ class ToolAgentLoop(AgentLoopBase):
             multi_modal_data["images"] = agent_data.image_data
         if agent_data.video_data is not None:
             multi_modal_data["videos"] = agent_data.video_data
+        if agent_data.audio_data is not None:
+            multi_modal_data["audios"] = agent_data.audio_data
 
         output: AgentLoopOutput = AgentLoopOutput(
             prompt_ids=prompt_ids,
             response_ids=response_ids[: self.response_length],
             response_mask=agent_data.response_mask[: self.response_length],
             multi_modal_data=multi_modal_data,
+            mm_processor_kwargs=agent_data.mm_processor_kwargs,
             response_logprobs=agent_data.response_logprobs[: self.response_length]
             if agent_data.response_logprobs
             else None,
@@ -186,12 +208,17 @@ class ToolAgentLoop(AgentLoopBase):
     async def _handle_pending_state(self, agent_data: AgentData, sampling_params: dict[str, Any]) -> AgentState:
         """Handle the pending state: prepare the prompt and start generation."""
         schemas = getattr(agent_data, "_active_tool_schemas", self.tool_schemas)
-        prompt_ids = await self.apply_chat_template(
-            agent_data.messages,
-            tools=schemas,
-            images=agent_data.image_data,
-            videos=agent_data.video_data,
-        )
+        if self.enable_continuous_token:
+            prompt_ids = await self.ct_build_initial_tokens(agent_data.messages, tools=schemas)
+        else:
+            prompt_ids = await self.apply_chat_template(
+                agent_data.messages,
+                tools=schemas,
+                images=agent_data.image_data,
+                videos=agent_data.video_data,
+                audios=agent_data.audio_data,
+                mm_processor_kwargs=agent_data.mm_processor_kwargs,
+            )
         agent_data.prompt_ids = prompt_ids
         return AgentState.GENERATING
 
@@ -199,6 +226,11 @@ class ToolAgentLoop(AgentLoopBase):
         self, agent_data: AgentData, sampling_params: dict[str, Any], ignore_termination: bool = False
     ) -> AgentState:
         """Handle the generating state: generate model response and check for tool calls."""
+        # Inject tool parser stop tokens so generation halts after each tool call
+        if self.tool_parser.stop_token_ids:
+            stop_token_ids = list(set((sampling_params.get("stop_token_ids") or []) + self.tool_parser.stop_token_ids))
+            sampling_params = {**sampling_params, "stop_token_ids": stop_token_ids}
+
         with simple_timer("generate_sequences", agent_data.metrics):
             output: TokenOutput = await self.server_manager.generate(
                 request_id=agent_data.request_id,
@@ -206,6 +238,8 @@ class ToolAgentLoop(AgentLoopBase):
                 sampling_params=sampling_params,
                 image_data=agent_data.image_data,
                 video_data=agent_data.video_data,
+                audio_data=agent_data.audio_data,
+                mm_processor_kwargs=agent_data.mm_processor_kwargs,
             )
         # first time to set num_preempted
         if agent_data.metrics.get("num_preempted") is None:
@@ -221,13 +255,29 @@ class ToolAgentLoop(AgentLoopBase):
             max_global_steps = output.extra_fields.get("max_global_steps", None)
             if max_global_steps:
                 agent_data.extra_fields["max_global_steps"] = max_global_steps
+            for key in SPEC_DECODE_EXTRA_KEYS:
+                if key in output.extra_fields and key in agent_data.extra_fields:
+                    agent_data.extra_fields[key] = int(agent_data.extra_fields[key]) + int(output.extra_fields[key])
 
         agent_data.assistant_turns += 1
         agent_data.response_ids = output.token_ids
-        agent_data.prompt_ids += agent_data.response_ids
-        agent_data.response_mask += [1] * len(agent_data.response_ids)
-        if output.log_probs:
-            agent_data.response_logprobs += output.log_probs
+        if self.enable_continuous_token:
+            merge_result, response_mask, response_logprobs = await self.ct_merge_assistant_token(
+                agent_data.prompt_ids,
+                agent_data.response_ids,
+                agent_data.response_mask,
+                agent_data.response_logprobs if (agent_data.response_logprobs or output.log_probs) else None,
+                assistant_logprobs=output.log_probs if output.log_probs else None,
+            )
+            agent_data.prompt_ids = merge_result.token_ids
+            agent_data.response_mask = response_mask
+            if response_logprobs is not None:
+                agent_data.response_logprobs = response_logprobs
+        else:
+            agent_data.prompt_ids += agent_data.response_ids
+            agent_data.response_mask += [1] * len(agent_data.response_ids)
+            if output.log_probs:
+                agent_data.response_logprobs += output.log_probs
 
         if output.routed_experts is not None:
             agent_data.routed_experts = output.routed_experts
@@ -243,7 +293,11 @@ class ToolAgentLoop(AgentLoopBase):
         # Extract tool calls (use per-sample tools if routed)
         active_tools = getattr(agent_data, "_active_tools", self.tools)
         tools = [tool.tool_schema for tool in active_tools.values()]
-        _, agent_data.tool_calls = await self.tool_parser.extract_tool_calls(agent_data.response_ids, tools)
+        assistant_content, agent_data.tool_calls = await self.tool_parser.extract_tool_calls(
+            agent_data.response_ids, tools
+        )
+        if self.enable_continuous_token:
+            agent_data.messages.append(self._build_assistant_message(assistant_content, agent_data))
 
         if agent_data.tool_calls:
             return AgentState.PROCESSING_TOOLS
@@ -254,6 +308,7 @@ class ToolAgentLoop(AgentLoopBase):
         """Handle the processing tools state: execute tool calls and prepare tool responses."""
         add_messages: list[dict[str, Any]] = []
         new_images_this_turn: list[Any] = []  # Local variable instead of agent_data attribute
+        previous_messages = list(agent_data.messages)
 
         tasks = []
         tool_call_names = []
@@ -266,7 +321,8 @@ class ToolAgentLoop(AgentLoopBase):
 
         # Process tool responses and update multi_modal_data
         # Removed: agent_data.new_images_this_turn = []
-        for tool_response, tool_reward, _ in responses:
+        for tool_index, (tool_response, tool_reward, _) in enumerate(responses):
+            tool_call = agent_data.tool_calls[tool_index]
             # Create message from tool response
             if tool_response.image or tool_response.video:
                 # Multi-modal content with structured format
@@ -287,6 +343,8 @@ class ToolAgentLoop(AgentLoopBase):
             else:
                 # Text-only content
                 message = {"role": "tool", "content": tool_response.text or ""}
+            if tool_call.tool_call_id is not None:
+                message["tool_call_id"] = tool_call.tool_call_id
 
             add_messages.append(message)
 
@@ -316,9 +374,41 @@ class ToolAgentLoop(AgentLoopBase):
 
         agent_data.messages.extend(add_messages)
 
-        if self.tool_parser_name == "gpt-oss":
+        if self.enable_continuous_token and not new_images_this_turn:
+            schemas = getattr(agent_data, "_active_tool_schemas", self.tool_schemas)
+            merge_result, response_mask, response_logprobs = await self.ct_merge_non_assistant_msg(
+                previous_messages,
+                agent_data.messages,
+                agent_data.prompt_ids,
+                agent_data.response_mask,
+                agent_data.response_logprobs if agent_data.response_logprobs else None,
+                tools=schemas,
+            )
+            if len(response_mask) >= self.response_length:
+                return AgentState.TERMINATED
+            agent_data.prompt_ids = merge_result.token_ids
+            agent_data.response_mask = response_mask
+            if agent_data.response_logprobs:
+                agent_data.response_logprobs = response_logprobs or []
+            agent_data.user_turns += 1
+            return AgentState.GENERATING
+        elif self.tool_parser_name == "gpt-oss":
             logger.info("manually format tool responses for gpt-oss")
             tool_response_text = build_gpt_oss_tool_response_text(add_messages, tool_call_names)
+            response_ids = await self.loop.run_in_executor(
+                None, lambda: self.tokenizer.encode(tool_response_text, add_special_tokens=False)
+            )
+        elif self.tool_parser_name == "gemma4":
+            # Gemma4's chat template drops tool responses when passed without the preceding
+            # assistant tool_call message. Manually format the response tokens.
+            # Format: <|tool_response>response:func_name{value:<|"|>content<|"|>}<tool_response|>
+            parts = []
+            for msg, name in zip(add_messages, tool_call_names, strict=True):
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    content = "".join([item.get("text", "") for item in content if item.get("type") == "text"])
+                parts.append(f'<|tool_response>response:{name}{{value:<|"|>{content}<|"|>}}<tool_response|>')
+            tool_response_text = "".join(parts)
             response_ids = await self.loop.run_in_executor(
                 None, lambda: self.tokenizer.encode(tool_response_text, add_special_tokens=False)
             )
@@ -333,6 +423,12 @@ class ToolAgentLoop(AgentLoopBase):
                 videos=videos,
                 remove_system_prompt=True,
             )
+            # The model stopped at the assistant close token and never emitted the template's
+            # trailing turn separator (e.g. "\n" for Qwen); rendering this tool turn in isolation
+            # also omits it. Restore it so the incremental sequence matches apply_chat_template of
+            # the full conversation (see verl issue #6501 comment). ``turn_separator`` is [] for
+            # templates without one, so this is a no-op there.
+            response_ids = self.turn_separator + response_ids
 
         if len(agent_data.response_mask) + len(response_ids) >= self.response_length:
             return AgentState.TERMINATED
@@ -353,10 +449,41 @@ class ToolAgentLoop(AgentLoopBase):
         agent_data.user_turns += 1
         return AgentState.GENERATING
 
+    def _build_assistant_message(self, content: str, agent_data: AgentData) -> dict[str, Any]:
+        message: dict[str, Any] = {"role": "assistant", "content": content or ""}
+        if not agent_data.tool_calls:
+            return message
+
+        tool_calls = []
+        for index, tool_call in enumerate(agent_data.tool_calls[: self.max_parallel_calls]):
+            function_call, has_decode_error = OpenAIFunctionCallSchema.from_openai_function_parsed_schema(
+                OpenAIFunctionParsedSchema(name=tool_call.name, arguments=tool_call.arguments)
+            )
+            if has_decode_error:
+                raise ValueError(
+                    f"Invalid tool call arguments for '{tool_call.name}': expected a JSON object string, "
+                    f"got {tool_call.arguments!r}"
+                )
+            tool_call_message = {
+                "type": "function",
+                "function": function_call.model_dump(),
+            }
+            if tool_call.tool_call_id is not None:
+                tool_call_message["id"] = tool_call.tool_call_id
+            tool_calls.append(tool_call_message)
+        message["tool_calls"] = tool_calls
+        return message
+
     async def _call_tool(
         self, tool_call: FunctionCall, tools_kwargs: dict[str, Any], agent_data: AgentData
     ) -> tuple[ToolResponse, float, dict]:
-        """Call tool and return tool response."""
+        """Call tool and return tool response.
+
+        Dispatches between two contracts:
+        - ``FunctionTool``: stateless function-based tool. Invoked directly with
+          parsed arguments; no lifecycle.
+        - ``BaseTool`` subclass: stateful tool with full lifecycle.
+        """
         active_tools = getattr(agent_data, "_active_tools", self.tools)
 
         # Validate tool name
@@ -379,24 +506,35 @@ class ToolAgentLoop(AgentLoopBase):
         tool, instance_id = None, None
         try:
             tool = active_tools[tool_name]
-            kwargs = tools_kwargs.get(tool_name, {})
-            instance_id, _ = await tool.create(create_kwargs=kwargs.get("create_kwargs", {}))
-            tool_execution_response, tool_reward, res = await tool.execute(
-                instance_id, tool_args, agent_data=agent_data
-            )
+
+            if isinstance(tool, FunctionTool):
+                # Function-based tools have no lifecycle; call directly.
+                # Note: tools_kwargs (create_kwargs / release_kwargs) is intentionally
+                # ignored here. Function tools are stateless and per-trajectory state
+                # injection is not supported by design; use a BaseTool subclass instead.
+                raw = await tool.call(tool_args)
+                tool_execution_response, tool_reward, res = normalize_function_tool_return(raw)
+            else:
+                # BaseTool subclass
+                kwargs = tools_kwargs.get(tool_name, {})
+                instance_id, _ = await tool.create(create_kwargs=kwargs.get("create_kwargs", {}))
+                tool_execution_response, tool_reward, res = await tool.execute(
+                    instance_id, tool_args, agent_data=agent_data
+                )
         except Exception as e:
             logger.warning(f"Error executing tool '{tool_name}': {e}")
             return ToolResponse(text=f"Error executing tool '{tool_name}': {e}"), 0.0, {}
         finally:
-            if tool and instance_id:
+            # Only BaseTool instances need release (function tools never set instance_id).
+            if tool and instance_id and not isinstance(tool, FunctionTool):
                 await tool.release(instance_id)
 
         tool_response_text = tool_execution_response.text
         if tool_response_text and len(tool_response_text) > self.max_tool_response_length:
             if self.tool_response_truncate_side == "left":
-                tool_response_text = tool_response_text[: self.max_tool_response_length] + "...(truncated)"
-            elif self.tool_response_truncate_side == "right":
                 tool_response_text = "(truncated)..." + tool_response_text[-self.max_tool_response_length :]
+            elif self.tool_response_truncate_side == "right":
+                tool_response_text = tool_response_text[: self.max_tool_response_length] + "...(truncated)"
             else:
                 length = self.max_tool_response_length // 2
                 tool_response_text = tool_response_text[:length] + "...(truncated)..." + tool_response_text[-length:]

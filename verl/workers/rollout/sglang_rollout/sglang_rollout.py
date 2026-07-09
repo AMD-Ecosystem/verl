@@ -77,11 +77,19 @@ def _set_envs_and_config(server_args: ServerArgs):
             "Please uninstall the old version and reinstall the latest version by following the instructions at https://docs.flashinfer.ai/installation.html.",
         )
     if is_cuda():
-        assert_pkg_version(
-            "sgl-kernel",
-            "0.1.1",
-            "Please reinstall the latest version with `pip install sgl-kernel --force-reinstall`",
-        )
+        try:
+            # For sglang 0.5.12 and sglang_kernel > 0.4.2, naming is sglang_kernel
+            assert_pkg_version(
+                "sglang_kernel",
+                "0.1.1",
+                "Please reinstall the latest version with `pip install follow https://sgl-project.github.io/get_started/install.html#for-cuda-13`",
+            )
+        except Exception:
+            assert_pkg_version(
+                "sgl_kernel",
+                "0.1.1",
+                "Please reinstall the latest version with `pip install sgl-kernel --force-reinstall`",
+            )
 
     # Set mp start method
     mp.set_start_method("spawn", force=True)
@@ -112,16 +120,12 @@ class ServerAdapter(BaseRollout):
             import sglang
             from packaging import version
 
+            from verl.utils.sglang.sglang_fp8_utils import build_sglang_fp8_quant_config
+
             assert version.parse(sglang.__version__) >= version.parse("0.5.5"), (
                 "sglang>=0.5.5 is required for FP8 quantization"
             )
-            FP8_BLOCK_QUANT_KWARGS = {
-                "activation_scheme": "dynamic",
-                "fmt": "e4m3",
-                "quant_method": "fp8",
-                "weight_block_size": [128, 128],
-            }
-            fp8_block_quant_kwargs = dict(FP8_BLOCK_QUANT_KWARGS)
+            fp8_block_quant_kwargs = build_sglang_fp8_quant_config(self.model_config.hf_config)
             self.model_config.hf_config.quantization_config = fp8_block_quant_kwargs
         self._engine: AsyncHttpServerAdapter = None
 
