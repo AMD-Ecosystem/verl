@@ -102,13 +102,20 @@ async def _run_server_manager_without_resume(
                         sampling_params={
                             "temperature": 1.0,
                             "logprobs": True,
+                            # Force generation to run for the full response_length so it
+                            # is still in-flight when update_weights() is called.  Without
+                            # min_tokens, fast AMD hardware (MI300X) can finish the
+                            # request within the sleep window, causing stop_reason to be
+                            # "completed" instead of "aborted".
+                            "min_tokens": 4096,
                         },
                     )
                 )
             )
 
-        # wait a while and update weights to interrupt the generation
-        await asyncio.sleep(2)
+        # Abort early enough that generation (min_tokens=4096) is guaranteed in-flight.
+        # A short sleep is sufficient because min_tokens prevents early EOS completion.
+        await asyncio.sleep(0.5)
         await checkpoint_manager.update_weights(global_steps=global_steps)
 
         outputs = await asyncio.gather(*tasks)
@@ -145,6 +152,9 @@ async def _run_server_manager_with_resume(
                     sampling_params={
                         "temperature": 1.0,
                         "logprobs": True,
+                        # Force generation to run for the full response_length so it
+                        # is still in-flight when update_weights() is called.
+                        "min_tokens": 4096,
                     },
                 )
             )
@@ -152,8 +162,8 @@ async def _run_server_manager_with_resume(
 
     # 2. trainer update weights to rollout multiple times
     for global_steps in range(initial_steps, initial_steps + train_steps):
-        # wait a while and update weights to interrupt the generation
-        await asyncio.sleep(2)
+        # Short sleep: min_tokens=4096 guarantees generation is in-flight.
+        await asyncio.sleep(0.5)
         await checkpoint_manager.update_weights(global_steps=global_steps)
 
     # 3. wait for rollout generate responses finished

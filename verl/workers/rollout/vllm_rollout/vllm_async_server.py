@@ -101,6 +101,7 @@ class vLLMHttpServer:
         gpus_per_node: int,
         nnodes: int,
         cuda_visible_devices: str,
+        is_reward_model: bool = False,
     ):
         """
         Args:
@@ -138,6 +139,7 @@ class vLLMHttpServer:
 
         self.rollout_mode = rollout_mode
         self.workers = workers
+        self.is_reward_model = is_reward_model
 
         self.replica_rank = replica_rank
         self.node_rank = node_rank
@@ -335,6 +337,23 @@ class vLLMHttpServer:
 
         args.update({"enable_expert_parallel": self.config.expert_parallel_size > 1})
 
+        # Discriminative reward models (DisRM) use a sequence-classification head
+        # (e.g. LlamaForSequenceClassification). These architectures are not in the
+        # vLLM model registry, so vLLM defaults to runner_type="generate" and never
+        # registers the /classify HTTP route used by compute_score_disrm() -> 404.
+        # Fix: force --runner pooling only when the model architecture is a
+        # classification model (contains "SequenceClassification" or "RewardModel").
+        # Generative reward models (GenRM) use standard CausalLM architectures and
+        # must NOT use pooling runner because they need /v1/chat/completions.
+        if self.is_reward_model:
+            architectures = getattr(self.model_config.hf_config, "architectures", []) or []
+            needs_pooling_runner = any(
+                "SequenceClassification" in arch or "RewardModel" in arch
+                for arch in architectures
+            )
+            if needs_pooling_runner:
+                args["runner"] = "pooling"
+
         # used for torch.distributed.init_process_group
         if self.nnodes > 1:
             args.update(
@@ -435,14 +454,36 @@ class vLLMHttpServer:
         build_app_kwargs: dict[str, Any] = {}
         if "supported_tasks" in build_app_sig.parameters:
             supported_tasks = await engine_client.get_supported_tasks()
-            build_app_kwargs["supported_tasks"] = supported_tasks
-        # vLLM >= 0.20.0 requires `model_config` to register pooling API routes
-        # (e.g. ``/classify``, ``/embed``); see
-        # ``register_pooling_api_routers`` in vllm/entrypoints/pooling/factories.py
-        # which short-circuits when ``model_config`` is ``None``.
-        if "model_config" in build_app_sig.parameters:
-            build_app_kwargs["model_config"] = engine_client.model_config
-        app = build_app(args, **build_app_kwargs)
+
+            # vLLM v1's PoolingRunner.get_supported_tasks() only recognises
+            # models that implement VllmModelForPooling.  Architectures loaded
+            # via the Transformers backend (e.g. LlamaForSequenceClassification)
+            # do not implement that interface, so supported_tasks may come back
+            # empty even though the engine was configured with --runner pooling
+            # --convert classify.  In that case, supplement supported_tasks from
+            # the resolved model_config.convert_type so that the correct HTTP
+            # routes (e.g. /classify) are registered.
+            convert_type = getattr(vllm_config.model_config, "convert_type", "none")
+            if convert_type not in ("none", None) and convert_type not in supported_tasks:
+                supported_tasks = (*supported_tasks, convert_type)
+                logger.info(
+                    "Supplemented supported_tasks with convert_type=%r "
+                    "(model is loaded via Transformers backend); "
+                    "supported_tasks=%s",
+                    convert_type,
+                    supported_tasks,
+                )
+
+            # Pass model_config so that register_pooling_api_routers (called
+            # inside build_app) doesn't early-exit when model_config is None --
+            # that guard exists to prevent route registration for non-pooling
+            # models, but here we explicitly want /classify registered.
+            if "model_config" in build_app_sig.parameters:
+                app = build_app(args, supported_tasks, vllm_config.model_config)
+            else:
+                app = build_app(args, supported_tasks)
+        else:
+            app = build_app(args)
 
         init_app_sig = inspect.signature(init_app_state)
         if "vllm_config" in init_app_sig.parameters:
@@ -1081,6 +1122,7 @@ class vLLMReplica(RolloutReplica):
                 gpus_per_node=gpus_per_replica_node,
                 nnodes=nnodes,
                 cuda_visible_devices=node_cuda_visible_devices,
+                is_reward_model=self.is_reward_model,
             )
             self.servers.append(server)
 

@@ -14,8 +14,10 @@
 """Utilities for distributed training."""
 
 import ctypes
+import logging
 import os
 import socket
+import time
 from datetime import timedelta
 from typing import Any
 
@@ -23,7 +25,9 @@ import ray
 import torch.distributed
 from torch.distributed import TCPStore
 
-from verl.utils.device import get_device_name, get_nccl_backend, get_resource_name, get_torch_device, is_npu_available
+logger = logging.getLogger(__name__)
+
+from verl.utils.device import get_device_name, get_nccl_backend, get_torch_device, is_npu_available
 from verl.utils.net_utils import is_ipv6
 
 
@@ -89,13 +93,37 @@ def initialize_global_process_group_ray(timeout_second=None, backend=None):
     if not torch.distributed.is_initialized():
         rank = int(os.environ.get("RANK", 0))
         world_size = int(os.environ.get("WORLD_SIZE", 1))
-        torch.distributed.init_process_group(
-            backend=backend,
-            rank=rank,
-            world_size=world_size,
-            timeout=timeout,
-            init_method=os.environ.get("DIST_INIT_METHOD", None),
-        )
+        init_method = os.environ.get("DIST_INIT_METHOD", None)
+
+        # Retry on EADDRINUSE: a previous test's actor process may still be
+        # holding the ephemeral port that the OS re-assigned to us.  All
+        # workers in the same group share the same MASTER_PORT, so they will
+        # all sleep for the same duration and retry in sync.
+        max_retries = 6
+        for attempt in range(max_retries):
+            try:
+                torch.distributed.init_process_group(
+                    backend=backend,
+                    rank=rank,
+                    world_size=world_size,
+                    timeout=timeout,
+                    init_method=init_method,
+                )
+                return
+            except Exception as e:
+                is_addr_in_use = "EADDRINUSE" in str(e) or "address already in use" in str(e).lower()
+                if is_addr_in_use and attempt < max_retries - 1:
+                    wait = 2**attempt  # 1, 2, 4, 8, 16, 32 s
+                    logger.warning(
+                        "initialize_global_process_group_ray: EADDRINUSE on attempt %d/%d, "
+                        "retrying in %ds (port still held by a previous actor).",
+                        attempt + 1,
+                        max_retries,
+                        wait,
+                    )
+                    time.sleep(wait)
+                    continue
+                raise
 
 
 def create_tcp_store(

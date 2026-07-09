@@ -93,8 +93,24 @@ def get_device_uuid(device_id: int) -> str:
     else:
         try:
             return current_platform.get_device_uuid(device_id)
-        except Exception:
-            return get_platform().get_device_uuid(device_id=device_id)
+        except NotImplementedError:
+            # ROCm: vLLM's ROCm platform does not implement get_device_uuid
+            # (raises NotImplementedError). Derive a stable, unique per-device
+            # identifier from the visible-device env or torch device properties
+            # so the rollout server can initialize on AMD GPUs.
+            for env_var in ("HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "CUDA_VISIBLE_DEVICES"):
+                visible = os.getenv(env_var)
+                if visible:
+                    ids = visible.split(",")
+                    if device_id < len(ids):
+                        return f"ROCm-{ids[device_id].strip()}"
+            try:
+                uuid = getattr(torch.cuda.get_device_properties(device_id), "uuid", None)
+                if uuid is not None:
+                    return f"ROCm-{uuid}"
+            except Exception:
+                pass
+            return f"ROCm-{device_id}"
 
 
 def get_vllm_max_lora_rank(lora_rank: int):

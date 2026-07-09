@@ -1,0 +1,34 @@
+defaults:
+  numbered: False
+  maxdepth: 6
+root: index
+subtrees:
+- entries:
+  - file: what-is-verl.rst
+    title: What is verl?
+
+- caption: Install
+  entries:
+  - file: install/verl-install.rst
+    title: Install verl
+
+- caption: Examples
+  entries:
+  - file: examples/verl-examples.rst
+    title: Run a verl example
+
+- caption: Reference
+  entries:
+  - url: https://verl.readthedocs.io/en/latest/start/quickstart.html
+    title: Quickstart PPO training on GSM8K dataset (upstream)
+  - url: https://verl.readthedocs.io/en/latest/hybrid_flow.html
+    title: HybridFlow programming guide (upstream)
+
+- caption: About
+  entries:
+  - url: https://rocm.blogs.amd.com/artificial-intelligence/verl-large-scale-rocm7/README.html
+    title: ROCm verl blog
+  - url: https://github.com/ROCm/verl/blob/main/CONTRIBUTING.md
+    title: Contribute to verl
+  - file: about/license.rst
+    title: License
