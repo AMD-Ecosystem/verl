@@ -44,6 +44,6 @@ The verl public repository is located at `https://github.com/ROCm/verl <https://
       * `HybridFlow programming guide (upstream) <https://verl.readthedocs.io/en/latest/hybrid_flow.html>`__
 
 To contribute to the documentation, refer to
-`Contributing to verl <https://github.com/ROCm/verl/blob/main/CONTRIBUTING.md>`__.
+`Contributing to ROCm <https://rocm.docs.amd.com/en/latest/contribute/contributing.html>`_.
 
 You can find licensing information on the :doc:`Licensing <about/license>` page.
