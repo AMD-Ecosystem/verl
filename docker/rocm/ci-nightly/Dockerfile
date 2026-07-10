@@ -8,7 +8,7 @@ ARG GPU_ARCH="gfx942;gfx942"
 ARG MAX_JOBS=64
 
 ARG RAY_SPEC="ray[default,serve]>=2.47.0"
-ARG RAY_SOURCE="stable"
+ARG RAY_SOURCE="nightly"
 ARG PYTHON_VERSION
 
 ARG VERL_REPO=https://github.com/ROCm/verl.git
@@ -54,8 +54,24 @@ RUN PY_TAG="cp$(echo ${PYTHON_VERSION} | tr -d '.')" && \
 #    "git+https://github.com/YangWang92/torch_memory_saver_numa.git@numa"
 
 # ── verl runtime dependencies ─────────────────────────────────────────────────
+# tensordict>=0.10 is required by verl/protocol.py's DataProto.to_tensordict();
+# verl's own requirements.txt pins tensordict>=0.8.0,<=0.10.0,!=0.9.0, so 0.10.0
+# is the newest version that satisfies both constraints. tensordict>=0.7 needs
+# `pyvers` (not auto-installed with --no-deps), so it's pinned explicitly here;
+# tensordict 0.10.0 requires pyvers>=0.1.0,<0.2.0.
+#
+# megatron-core + mbridge enable the "megatron" engine backend
+# (verl/workers/engine/megatron/transformer_impl.py); without megatron-core the
+# backend never registers ("Unknown backend: megatron"), and without mbridge
+# engine.initialize() fails with "No module named 'mbridge'" the first time it
+# builds the transformer config. Version/ref match the other ROCm Dockerfiles
+# (docker/rocm/Dockerfile.rocm, docker/rocm/verl0.7.1-amd0/Dockerfile).
 RUN pip install --no-cache-dir \
-        "tensordict==0.6.2" --no-deps \
+        "tensordict==0.10.0" --no-deps \
+    && pip install --no-cache-dir \
+        "pyvers>=0.1.0,<0.2.0" \
+    && pip install --no-cache-dir \
+        "git+https://github.com/ISEEKYAN/mbridge.git" \
     && pip install --no-cache-dir \
         accelerate \
         codetiming \
@@ -63,6 +79,7 @@ RUN pip install --no-cache-dir \
         dill \
         hydra-core \
         liger-kernel \
+        megatron-core==0.16.0 \
         numpy \
         pandas \
         peft \
