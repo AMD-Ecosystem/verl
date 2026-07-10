@@ -46,7 +46,7 @@ RUN PY_TAG="cp$(echo ${PYTHON_VERSION} | tr -d '.')" && \
         "ray[default,serve] @ https://s3-us-west-2.amazonaws.com/ray-wheels/latest/ray-3.0.0.dev0-${PY_TAG}-${PY_TAG}-manylinux2014_x86_64.whl"; \
     else \
       pip uninstall -y ray 2>/dev/null || true \
-      && pip install --no-cache-dir "${RAY_SPEC}" \
+      && pip install --no-cache-dir "${RAY_SPEC}"; \
     fi
 
 # ── torch_memory_saver (NUMA-aware weight/optimizer offload for verl actors) ──
