@@ -24,6 +24,7 @@ import ray
 import ray.util.collective as collective
 import torch
 
+from tests.single_controller.test_utils import ray_init_with_retry
 from verl.single_controller.base import Worker
 from verl.single_controller.base.decorator import Dispatch, register
 from verl.single_controller.ray import RayClassWithInitArgs, RayResourcePool, RayWorkerGroup
@@ -69,7 +70,7 @@ class Rollout(Worker):
 
 
 def test_ray_collective_group():
-    ray.init()
+    ray_init_with_retry()
     ngpus = torch.cuda.device_count()
     n_rollout = max(1, ngpus // 3)  # keep 2:1 actor:rollout ratio
     n_actor = n_rollout * 2

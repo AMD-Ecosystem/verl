@@ -19,6 +19,7 @@ import torch
 from tensordict import TensorDict
 
 import verl.utils.tensordict_utils as tu
+from tests.single_controller.test_utils import ray_init_with_retry
 from verl import DataProto
 from verl.single_controller.base import Worker
 from verl.single_controller.base.decorator import make_nd_compute_dataproto_dispatch_fn, register
@@ -105,7 +106,7 @@ def test_dist_global_info_wg():
     # test the correctness of data dispatch and computation
     from verl.single_controller.ray import RayClassWithInitArgs, RayResourcePool, RayWorkerGroup
 
-    ray.init()
+    ray_init_with_retry()
     ngpus = torch.cuda.device_count()
     infer_tp = ngpus // 2
     train_tp = ngpus // 4
