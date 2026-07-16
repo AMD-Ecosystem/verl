@@ -18,6 +18,7 @@ e2e test verl.single_controller.ray
 import ray
 import torch
 
+from tests.single_controller.test_utils import ray_init_with_retry
 from verl.single_controller.base.decorator import Dispatch, Execute, collect_all_to_all, register
 from verl.single_controller.base.worker import Worker
 from verl.single_controller.ray.base import RayClassWithInitArgs, RayResourcePool, RayWorkerGroup
@@ -104,7 +105,7 @@ def add_one(data):
 
 
 def test_basics():
-    ray.init(num_cpus=100)
+    ray_init_with_retry(num_cpus=100)
 
     # create 4 workers, each hold a GPU
     resource_pool = RayResourcePool([4], use_gpu=True)
