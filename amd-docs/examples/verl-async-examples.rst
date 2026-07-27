@@ -16,9 +16,9 @@ reasoning training with FSDP2.
 Megatron example
 --------------------------------------------------------------------
 
-The `geo3k_qwen25vl_7b_megatron_4_4.sh <https://github.com/ROCm/verl/blob/main/verl/experimental/fully_async_policy/shell/geo3k_qwen25vl_7b_megatron_4_4.sh>`_ example launches fully asynchronous GRPO training for ``Qwen2.5-VL-7B-Instruct`` on the Geometry3k vision-math dataset using verl's fully asynchronous policy with the Megatron trainer configuration.
+The `geo3k_qwen25vl_7b_megatron_4_4.sh <https://github.com/AMD-Ecosystem/verl/blob/main/verl/experimental/fully_async_policy/shell/geo3k_qwen25vl_7b_megatron_4_4.sh>`_ example launches fully asynchronous GRPO training for ``Qwen2.5-VL-7B-Instruct`` on the Geometry3k vision-math dataset using verl's fully asynchronous policy with the Megatron trainer configuration.
 
-1. Download `prepare_geo3k_qwen25vl_7b_megatron_4_4.sh <https://github.com/ROCm/verl/tree/amd-integration/verl/experimental/fully_async_policy/shell/data_model_preparation/prepare_geo3k_qwen25vl_7b_megatron_4_4.sh>`_ and run:
+1. Download `prepare_geo3k_qwen25vl_7b_megatron_4_4.sh <https://github.com/AMD-Ecosystem/verl/tree/amd-integration/verl/experimental/fully_async_policy/shell/data_model_preparation/prepare_geo3k_qwen25vl_7b_megatron_4_4.sh>`_ and run:
 
    .. code-block:: bash
 
@@ -43,10 +43,10 @@ The `geo3k_qwen25vl_7b_megatron_4_4.sh <https://github.com/ROCm/verl/blob/main/v
 DAPO example
 --------------------------------------------------------------------
 
-The `dapo_7b_math_fsdp2_4_4.sh <https://github.com/ROCm/verl/blob/main/verl/experimental/fully_async_policy/shell/dapo_7b_math_fsdp2_4_4.sh>`__
+The `dapo_7b_math_fsdp2_4_4.sh <https://github.com/AMD-Ecosystem/verl/blob/main/verl/experimental/fully_async_policy/shell/dapo_7b_math_fsdp2_4_4.sh>`__
 example launches fully asynchronous DAPO reinforcement learning training using ``Qwen2.5-Math-7B`` on math reasoning tasks.
 
-1. Download `prepare_dapo_7b_math_fsdp2_4_4.sh <https://github.com/ROCm/verl/tree/amd-integration/verl/experimental/fully_async_policy/shell/data_model_preparation/prepare_dapo_7b_math_fsdp2_4_4.sh>`_ and run:
+1. Download `prepare_dapo_7b_math_fsdp2_4_4.sh <https://github.com/AMD-Ecosystem/verl/tree/amd-integration/verl/experimental/fully_async_policy/shell/data_model_preparation/prepare_dapo_7b_math_fsdp2_4_4.sh>`_ and run:
 
    .. code-block:: bash
 

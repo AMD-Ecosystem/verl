@@ -69,11 +69,11 @@ Prebuilt Docker images with verl configured for ROCm are available on `Docker Hu
 Build your own Docker image
 --------------------------------------------------------------------------------
 
-1. Clone the `https://github.com/ROCm/verl <https://github.com/ROCm/verl>`_ repository
+1. Clone the `https://github.com/AMD-Ecosystem/verl <https://github.com/AMD-Ecosystem/verl>`_ repository
 
    .. code-block:: bash
 
-      git clone https://github.com/ROCm/verl.git
+      git clone https://github.com/AMD-Ecosystem/verl.git
 
 2. Build the Docker container using the Dockerfile in the ``verl/docker`` directory
 
@@ -82,7 +82,7 @@ Build your own Docker image
       cd verl
       docker build --build-arg VLLM_REPO=https://github.com/vllm-project/vllm.git \
          --build-arg VLLM_BRANCH=4ca5cd5740c0cd7788cdfa8b7ec6a27335607a48 \
-         --build-arg VERL_REPO=https://github.com/ROCm/verl.git \
+         --build-arg VERL_REPO=https://github.com/AMD-Ecosystem/verl.git \
          --build-arg VERL_BRANCH=0eb50ec4a33cda97e05ed8caab9c7f17a30c05a9 \
          -f docker/Dockerfile.rocm7 -t my-rocm-verl .
 

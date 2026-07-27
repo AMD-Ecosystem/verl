@@ -22,10 +22,10 @@ verl achieves high training and generation throughput by building on existing LL
 Its 3D-HybridEngine reduces memory use and communication overhead when switching between training 
 and inference, improving overall performance.
 
-verl is part of the `ROCm-LLMExt toolkit
+verl is part of the `AMD LLM Extension toolkit
 <https://rocm.docs.amd.com/projects/rocm-llmext/en/docs-26.02/>`__.
 
-The verl public repository is located at `https://github.com/ROCm/verl <https://github.com/ROCm/verl>`__.
+The verl public repository is located at `https://github.com/AMD-Ecosystem/verl <https://github.com/AMD-Ecosystem/verl>`__.
 
 .. grid:: 2
   :gutter: 3
@@ -45,6 +45,6 @@ The verl public repository is located at `https://github.com/ROCm/verl <https://
       * `HybridFlow programming guide (upstream) <https://verl.readthedocs.io/en/latest/hybrid_flow.html>`__
 
 To contribute to the documentation, refer to
-`Contributing to verl <https://github.com/ROCm/verl/blob/main/CONTRIBUTING.md>`__.
+`Contributing to verl <https://github.com/AMD-Ecosystem/verl/blob/main/CONTRIBUTING.md>`__.
 
 You can find licensing information on the :doc:`Licensing <about/license>` page.

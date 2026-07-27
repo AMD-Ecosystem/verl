@@ -19,8 +19,6 @@ Learning from Human Feedback (RLHF) and other RL-based optimization
 workflows. The library integrates with modern language model training
 and inference stacks while prioritizing performance and modularity.
 
-verl is part of the `ROCm-LLMExt toolkit <https://rocm.docs.amd.com/projects/rocm-llmext/en/docs-26.02/>`__.
-
 Why verl?
 ====================================================================
 
