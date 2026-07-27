@@ -13,7 +13,7 @@ It covers data preparation, model loading checks, configuration,
 environment variables, running PPO and GRPO, and launching multi-node
 training with Slurm.
 
-1. Prepare the GSM8K dataset using the provided preprocessing script from the examples directory at `https://github.com/ROCm/verl/tree/main/examples/data_preprocess <https://github.com/ROCm/verl/tree/main/examples/data_preprocess>`__.
+1. Prepare the GSM8K dataset using the provided preprocessing script from the examples directory at `https://github.com/AMD-Ecosystem/verl/tree/main/examples/data_preprocess <https://github.com/AMD-Ecosystem/verl/tree/main/examples/data_preprocess>`__.
 
    .. code-block:: bash
 
