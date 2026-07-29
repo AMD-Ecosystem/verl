@@ -18,7 +18,7 @@ To use verl `0.7.1 <https://github.com/volcengine/verl/releases/tag/v0.7.1>`__, 
 - **GPU platform:** AMD Instinct™ MI300X, MI325X, MI355X
 - **PyTorch:** `2.9.1 <https://github.com/ROCm/pytorch/tree/release/2.9-rocm7.x-gfx115x>`__
 - **Python:** `3.12 <https://www.python.org/downloads/release/python-31211/>`__
-- **vLLM:** `0.20.2 <https://github.com/vllm-project/vllm/releases/tag/v0.20.2>`__
+- **vLLM:** `0.18.1 <https://github.com/vllm-project/vllm/releases/tag/v0.18.1>`__
 
 Install verl
 ================================================================================
