@@ -61,7 +61,7 @@ Prebuilt Docker images with verl configured for ROCm are available on `Docker Hu
          -v "$HOME:$HOME" \
          --shm-size 128G \
          -w "$PWD" \
-         rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.18 \
+         rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2 \
          /bin/bash
 
 .. _build-your-verl-rocm-docker-image:
