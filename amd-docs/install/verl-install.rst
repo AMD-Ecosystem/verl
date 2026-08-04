@@ -69,41 +69,29 @@ Prebuilt Docker images with verl configured for ROCm are available on `Docker Hu
 Build your own Docker image
 --------------------------------------------------------------------------------
 
-1. Clone the `https://github.com/AMD-Ecosystem/verl <https://github.com/AMD-Ecosystem/verl>`_ repository
+1. Download the Dockerfile from the ``release/0.7.1.amd0`` branch:
 
    .. code-block:: bash
 
-      git clone https://github.com/AMD-Ecosystem/verl.git
+      curl -O https://raw.githubusercontent.com/AMD-Ecosystem/verl/release/0.7.1.amd0/docker/rocm/verl0.7.1-amd0/Dockerfile
 
-2. Build the Docker container using the Dockerfile in the ``verl/docker`` directory
-
-   .. code-block:: bash
-
-      cd verl
-      docker build --build-arg VLLM_REPO=https://github.com/vllm-project/vllm.git \
-         --build-arg VLLM_BRANCH=4ca5cd5740c0cd7788cdfa8b7ec6a27335607a48 \
-         --build-arg VERL_REPO=https://github.com/AMD-Ecosystem/verl.git \
-         --build-arg VERL_BRANCH=0eb50ec4a33cda97e05ed8caab9c7f17a30c05a9 \
-         -f docker/Dockerfile.rocm7 -t my-rocm-verl .
-
-3. Launch and connect to the container
+2. Build the Docker image:
 
    .. code-block:: bash
 
-      docker run --rm -it \
-         --device /dev/dri \
-         --device /dev/kfd \
-         -p 8265:8265 \
-         --group-add video \
-         --cap-add SYS_PTRACE \
-         --security-opt seccomp=unconfined \
-         --privileged \
-         -v $HOME/.ssh:/root/.ssh \
-         -v $HOME:$HOME \
-         --shm-size 128G \
-         -w $PWD \
-         --name rocm_verl \
-         my-rocm-verl \
+      docker build -t verl-release-v0.7.1amd0 .
+
+3. Run the Docker container:
+
+   .. code-block:: bash
+
+      docker run -it --name verl-release --device /dev/kfd --device /dev/dri \
+         --privileged --network=host \
+         --group-add video --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
+         --shm-size=2048g \
+         --ulimit memlock=-1 --ulimit stack=67108864 \
+         -w /workspace \
+         verl-release-v0.7.1amd0 \
          /bin/bash
 
    .. note::
