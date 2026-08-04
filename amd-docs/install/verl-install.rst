@@ -48,19 +48,19 @@ Prebuilt Docker images with verl configured for ROCm are available on `Docker Hu
 
    .. code-block:: bash
 
-      docker run --rm -it \
-         --name rocm_verl \
-         --device /dev/dri \
+      docker run -it \
+         --name verl-release \
          --device /dev/kfd \
+         --device /dev/dri \
+         --privileged \
+         --network=host \
          --group-add video \
          --cap-add SYS_PTRACE \
          --security-opt seccomp=unconfined \
-         --privileged \
-         -p 8265:8265 \
-         -v "$HOME/.ssh:/root/.ssh" \
-         -v "$HOME:$HOME" \
-         --shm-size 128G \
-         -w "$PWD" \
+         --shm-size 2048g \
+         --ulimit memlock=-1 \
+         --ulimit stack=67108864 \
+         -w /workspace \
          rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2 \
          /bin/bash
 
