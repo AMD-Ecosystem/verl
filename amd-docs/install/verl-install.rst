@@ -85,11 +85,18 @@ Build your own Docker image
 
    .. code-block:: bash
 
-      docker run -it --name verl-release --device /dev/kfd --device /dev/dri \
-         --privileged --network=host \
-         --group-add video --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
+      docker run -it \
+         --name verl-release \
+         --device /dev/kfd \
+         --device /dev/dri \
+         --privileged \
+         --network=host \
+         --group-add video \
+         --cap-add=SYS_PTRACE \
+         --security-opt seccomp=unconfined \
          --shm-size=2048g \
-         --ulimit memlock=-1 --ulimit stack=67108864 \
+         --ulimit memlock=-1 \
+         --ulimit stack=67108864 \
          -w /workspace \
          verl-release-v0.7.1amd0 \
          /bin/bash
