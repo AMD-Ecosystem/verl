@@ -67,36 +67,4 @@ example launches fully asynchronous DAPO reinforcement learning training using `
    .. image:: ../data/dapo_7b_math_fsdp2_4_4_complete.png
       :alt: Expected terminal output after dapo_7b_math_fsdp2_4_4.sh completes
 
-3. If you encounter out of memory issues, reduce ``max_position_embeddings`` in the ``config.json`` to 4096:
-
-   .. code-block:: bash
-
-      python -c "
-      import json, pathlib
-      config_path = pathlib.Path.home() / 'verl/models/Qwen2.5-Math-7B/config.json'
-      with open(config_path) as f:
-          config = json.load(f)
-      config['max_position_embeddings'] = 4096
-      with open(config_path, 'w') as f:
-          json.dump(config, f, indent=2)
-      "
-
-4. Apply these changes as overrides in ``dapo_7b_math_fsdp2_4_4.sh``:
-
-   .. code-block:: bash
-
-      # line 55: default uses * 2
-      actor_ppo_max_token_len=$((max_prompt_length + max_response_length))
-
-      # line 56: default uses * 3
-      infer_ppo_max_token_len=$(((max_prompt_length + max_response_length) * 2))
-
-      # line 61: default is fsdp_size=2
-      fsdp_size=4
-
-      # line 74: default is total_rollout_steps=$(((512*100)))
-      total_rollout_steps=$((100))
-
-      # line 105: default is max_position_embeddings=32768
-      +actor_rollout_ref.model.override_config.max_position_embeddings=4096 \
 
