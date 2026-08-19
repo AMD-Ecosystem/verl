@@ -16,7 +16,7 @@ To use verl `0.7.1 <https://github.com/volcengine/verl/releases/tag/v0.7.1>`__, 
 - **ROCm version:** `7.0.2 <https://rocm.docs.amd.com/en/docs-7.0.2/>`__
 - **Operating system:** Ubuntu 22.04
 - **GPU platform:** AMD Instinct™ MI300X, MI325X, MI355X
-- **PyTorch:** `2.9.1 <https://github.com/ROCm/pytorch/tree/release/2.9-rocm7.x-gfx115x>`__
+- **PyTorch:** `2.9.1 <https://github.com/pytorch/pytorch/tree/2.9.1>`__
 - **Python:** `3.12 <https://www.python.org/downloads/release/python-31211/>`__
 - **vLLM:** `0.20.2 <https://github.com/vllm-project/vllm/releases/tag/v0.20.2>`__
 
