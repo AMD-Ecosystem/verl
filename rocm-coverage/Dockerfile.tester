@@ -1,0 +1,90 @@
+# syntax=docker/dockerfile:1.2
+# SPDX-FileCopyrightText: Copyright (c) 2026 AMD
+# SPDX-License-Identifier: Apache-2.0
+#
+# verl standalone code-coverage tester (ROCm-subsystem scope).
+#
+# Thin overlay on the phase-1 base image, which is built from the project's own
+# Dockerfile_rocm.ci (rocm/primus + vLLM from source + megatron-core + verl).
+# Splitting the two keeps the multi-hour stack build out of the edit/measure
+# loop: only this layer rebuilds when the source under test changes.
+#
+# Dep strategy mirrors the CI coverage lane: verl is installed EDITABLE and
+# --no-deps so pip never moves the prebuilt ROCm stack, and everything else is
+# added under a constraints file pinning the compiled/ABI-critical packages to
+# the image's versions.
+ARG BASE_IMAGE=verl-cov-base:latest
+FROM ${BASE_IMAGE}
+
+# The base sets `-x`, which drowns the (already long) build log in traces.
+SHELL ["/bin/bash", "-ceo", "pipefail"]
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TOKENIZERS_PARALLELISM=false
+# The vLLM rollout smoke test fetches a tiny model (Qwen2.5-0.5B) on a cold
+# cache; the entrypoint flips this to offline once the cache is warm.
+ENV HF_HUB_OFFLINE=0
+
+# 1) Freeze the compiled / ABI-critical packages at the image's versions so the
+#    dependency installs below can never replace them. This is what protects the
+#    ROCm wheels, the source-built vLLM, and the numpy the stack was compiled
+#    against. Deliberately NOT protected: tensordict, pyarrow and other pure
+#    -python deps that verl pins to ranges the image may not already satisfy.
+RUN python3 -m pip freeze \
+      | grep -iE "^(numpy|torch|torchvision|torchaudio|torchao|vllm|ray|flash[-_]attn|aiter|triton|pytorch[-_]triton([-_]rocm)?|xformers|transformers|tokenizers|safetensors|megatron[-_]core|transformer[-_]engine([-_]torch|[-_]rocm)?|cupy([-_]rocm[-_0-9]*)?|apex|deepspeed|mamba[-_]ssm|tilelang|amd[-_]quark|amdsmi|rocm[-_]sdk.*)==" \
+      > /tmp/protect.txt; \
+    echo "=== protected constraints ===" && cat /tmp/protect.txt
+
+# 2) The source under test. The base image cloned an upstream verl tag; replace
+#    it wholesale with the local checkout so no file deleted upstream lingers,
+#    then re-run the editable install to refresh the dist-info metadata (the
+#    base installed a different version from the same path).
+COPY verl-source.tar.gz /verl-source.tar.gz
+RUN rm -rf /workspace/verl && mkdir -p /workspace/verl \
+    && tar -xzf /verl-source.tar.gz -C /workspace/verl --strip-components=1 \
+    && python3 -m pip install --no-cache-dir --no-deps -e /workspace/verl \
+    && python3 -c "import verl; print('verl', verl.__version__, '->', verl.__file__)"
+
+WORKDIR /workspace/verl
+
+# 3) verl's remaining (pure-python) deps, protected. transformers is omitted on
+#    purpose: Dockerfile_rocm.ci installs >=5.12 for Qwen3.5 while verl pins
+#    <5.11, and the rest of the image was built against the newer one, so the
+#    protected version wins rather than being downgraded out from under vLLM.
+RUN python3 -m pip install --no-cache-dir -c /tmp/protect.txt \
+    "tensordict>=0.8.0,!=0.9.0,<=0.10.0" \
+    hydra-core omegaconf codetiming dill datasets torchdata \
+    pylatexenc pybind11 wandb tensorboard "pyarrow>=19.0.0" \
+    accelerate peft uvicorn fastapi packaging
+
+# 4) Test tooling (the coverage harness itself).
+RUN python3 -m pip install --no-cache-dir -c /tmp/protect.txt \
+    pytest pytest-cov coverage pytest-timeout pytest-asyncio pytest-rerunfailures
+
+# 5) Best-effort optional extras (non-fatal): reward/math helpers and
+#    liger-kernel, used by a few suites. Skipping them costs a little coverage
+#    but must not fail the image build.
+RUN python3 -m pip install --no-cache-dir -c /tmp/protect.txt \
+    liger-kernel math-verify latex2sympy2_extended mathruler qwen_vl_utils \
+    || echo "optional extras skipped (non-fatal)"
+
+# Extra ROCm coverage tests. These are NOT carried in the verl tree; they are
+# staged into this build context from aisw-ci-builder-tester/verl/common/
+# extra-tests by verl_coverage.sh, then baked in so no runtime bind-mount is
+# needed. The entrypoint reads them from /verl-extra-tests
+# (VERL_CC_EXTRA_TESTS_DIR); a runtime -v mount over this path still works for
+# fast local iteration.
+COPY extra-tests/ /verl-extra-tests/
+
+# Coverage wiring (sitecustomize auto-starts coverage in pytest + ray subprocesses).
+COPY .coveragerc /workspace/verl/.coveragerc
+COPY .coveragerc.rocm /workspace/verl/.coveragerc.rocm
+COPY sitecustomize.py /workspace/verl/sitecustomize.py
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# 6) Sanity: the prebuilt ROCm stack, verl and the harness must all import.
+RUN python3 -c "import torch, verl, coverage, pytest; print('verl', verl.__version__); print('torch', torch.__version__, 'hip', torch.version.hip); print('coverage', coverage.__version__)" \
+    && (python3 -c "import vllm; print('vllm', vllm.__version__)" || echo "WARN: vllm import failed")
+
+ENTRYPOINT ["/entrypoint.sh"]

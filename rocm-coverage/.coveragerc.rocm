@@ -1,0 +1,95 @@
+# verl code-coverage -- ROCm-SUBSYSTEM scoped REPORT.
+#
+# This lane runs on the full prebuilt ROCm stack (torch/vllm/flash_attn/aiter/
+# ray from rocm/primus), so the report is scoped to the code that ACTUALLY
+# exercises ROCm: the device abstraction, torch/attention kernels, the
+# FSDP/sharding runtime, the single_controller (ray) plane, and the vLLM
+# rollout path. This is the honest "does verl work on ROCm" surface.
+[run]
+branch = false
+parallel = true
+concurrency = multiprocessing
+sigterm = true
+source = verl
+data_file = /tmp/verlcov/.coverage
+disable_warnings =
+    no-data-collected
+    module-not-imported
+
+[paths]
+verl_pkg =
+    verl/
+    */site-packages/verl/
+    */workspace/verl/verl/
+
+[report]
+include =
+    # --- Device / accelerator abstraction (primary ROCm surface) --------------
+    */verl/utils/device.py
+    # --- Platform plugin backends ---------------------------------------------
+    # verl >=0.9 adds a pluggable platform layer with a real ROCm backend
+    # (PlatformROCm, registered as "amd"). platform_cuda.py is in scope because
+    # PlatformROCm SUBCLASSES it -- on ROCm torch reuses the torch.cuda.* API
+    # via hipify, so the CUDA base class genuinely executes here. platform_npu.py
+    # is deliberately absent: it is Ascend-only and structurally unreachable.
+    */verl/plugin/platform/__init__.py
+    */verl/plugin/platform/platform_base.py
+    */verl/plugin/platform/platform_cuda.py
+    */verl/plugin/platform/platform_manager.py
+    */verl/plugin/platform/platform_rocm.py
+    # --- Torch + attention kernels (run on the HIP device) --------------------
+    */verl/utils/torch_functional.py
+    */verl/utils/attention_utils.py
+    */verl/utils/seqlen_balancing.py
+    */verl/utils/flops_counter.py
+    # ulysses.py: sequence-parallel collectives, exercised by the multi-GPU tier
+    # via the baked extra test utils/test_ulysses_rocm.py (mp.spawn, world_size=2).
+    */verl/utils/ulysses.py
+    # --- Distributed / FSDP runtime -------------------------------------------
+    */verl/utils/fsdp_utils.py
+    */verl/utils/import_utils.py
+    # --- single_controller (ray) execution plane ------------------------------
+    */verl/single_controller/*.py
+    */verl/single_controller/base/*.py
+    */verl/single_controller/ray/*.py
+    # --- vLLM rollout path (utilities + weight transfer) ----------------------
+    # We scope the rollout UTILITIES and the weight-transfer paths, which the
+    # lightweight gate genuinely exercises (colocated worker extension, device
+    # UUID, prompt-logprob handling, weight bucketing, buffer/param splitting).
+    #
+    # The online/async vLLM SERVER modules are deliberately OUT of scope:
+    #   - vllm_async_server.py : live multi-replica HTTP serving + Ray
+    #     placement-group orchestration (vLLMHttpServer / vLLMReplica).
+    #   - vllm_pd_replica.py   : prefill/decode-disaggregated replica management,
+    #     which needs the same live multi-replica deployment.
+    #   - vllm_rollout.py      : the vLLMRollout worker driving a live LLM engine.
+    # All require a full production serving deployment (real model weights, an
+    # HTTP API server, and a multi-GPU Ray cluster of replicas) that cannot run
+    # in the standalone single-/multi-GPU coverage gate. They belong to a
+    # separate end-to-end serving tier, so counting their un-runnable bodies in
+    # this denominator would misrepresent the ROCm-subsystem coverage.
+    */verl/workers/rollout/vllm_rollout/__init__.py
+    */verl/workers/rollout/vllm_rollout/utils.py
+    */verl/workers/rollout/vllm_rollout/bucketed_weight_transfer.py
+    */verl/workers/rollout/vllm_rollout/weight_update_utils.py
+    */verl/workers/sharding_manager/*.py
+# Exclude structurally-unreachable code: Ascend-NPU / CANN (no NPU on ROCm host)
+# and type-checking-only / abstract stubs.
+exclude_lines =
+    pragma: no cover
+    if is_npu_available
+    if is_torch_npu_available
+    if TYPE_CHECKING
+    raise NotImplementedError
+    @(abc\.)?abstractmethod
+    # Ascend-NPU-only device helpers: npu-smi / CANN version probing that cannot
+    # run (and is not ROCm-relevant) on an AMD host. coverage excludes the whole
+    # function body when the def line matches.
+    def get_npu_versions
+    def check_ipc_version_support
+    def get_npu_version
+    def is_torch_npu_available
+    elif is_npu_available
+    elif get_device_name\(\) == "npu"
+ignore_errors = true
+skip_empty = true

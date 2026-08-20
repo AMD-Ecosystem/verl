@@ -1,0 +1,32 @@
+# verl code-coverage configuration -- COLLECTION.
+# parallel + multiprocessing + COVERAGE_PROCESS_START capture coverage from
+# pytest AND any ray worker/actor subprocesses; `coverage combine` merges them.
+[run]
+branch = false
+parallel = true
+concurrency = multiprocessing
+sigterm = true
+source = verl
+# Local disk, NOT the bind-mounted /artifacts: ray may spawn many worker
+# processes, each writing a parallel .coverage.* file. Only the final
+# json/xml/report are copied to /artifacts by entrypoint.sh.
+data_file = /tmp/verlcov/.coverage
+disable_warnings =
+    no-data-collected
+    module-not-imported
+omit =
+    */tests/*
+    */test_*.py
+
+[paths]
+# Unify the editable-installed path and the staged source path under one report
+# path. verl lives at /workspace/verl in the primus-based image (the location
+# Dockerfile_rocm.ci clones into and pip-installs editable from).
+verl_pkg =
+    verl/
+    */site-packages/verl/
+    */workspace/verl/verl/
+
+[report]
+ignore_errors = true
+skip_empty = true
