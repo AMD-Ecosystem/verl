@@ -1,0 +1,193 @@
+ARG PRIMUS_REPO=rocm/primus
+ARG PRIMUS_TAG=v26.5
+FROM ${PRIMUS_REPO}:${PRIMUS_TAG}
+
+SHELL ["/bin/bash", "-ceuxo", "pipefail"]
+
+# gfx942 = MI300X, gfx950 = MI350X
+ARG GPU_ARCH="gfx942;gfx950"
+
+ARG VERL_SOURCE="release" # "release" or "nightly"
+ARG VERL_REPO="https://github.com/verl-project/verl.git"
+ARG VERL_BRANCH="v0.8.0"
+
+
+ARG RAY_SPEC="ray[default,serve]>=2.47.0"
+ARG RAY_SOURCE="stable"
+ARG PYTHON_VERSION=3.12
+
+# ── Runtime environment variables ──────────────────────────────────────────────
+# rocm/primus:v26.4 already ships torch and TransformerEngine (ROCm 7.14 /
+# torch 2.12 / TE 2.14.dev0, matching README_qwen3_5_35b_rocm.md's tested
+# environment), but it is a *training-only* image: it does not ship vllm
+# (built from source below) or megatron-core (installed with the Qwen3.5
+# extras below). So this Dockerfile layers those, verl itself, and the
+# Qwen3.5 extras documented in that README's "Install dependencies" section.
+ENV PYTORCH_ROCM_ARCH="${GPU_ARCH}"
+ENV AMDGPU_TARGETS="${GPU_ARCH}"
+ENV VLLM_TARGET_DEVICE=rocm
+
+# vLLM ROCm performance flags (see README_qwen3_5_35b_rocm.md "ROCm-specific
+# configuration notes"); run_qwen3_5_35b_megatron.sh re-exports the AITER ones
+# with its own defaults, so these just fix the image-level defaults.
+ENV VLLM_ROCM_USE_AITER=1
+ENV VLLM_FP8_PADDING=1
+ENV VLLM_FP8_ACT_PADDING=1
+ENV VLLM_FP8_WEIGHT_PADDING=1
+ENV VLLM_FP8_REDUCE_CONV=1
+ENV VLLM_WORKER_MULTIPROC_METHOD=spawn
+
+# RCCL tuning (can be overridden at runtime for multi-node)
+ENV NCCL_MIN_NCHANNELS=112
+ENV HSA_NO_SCRATCH_RECLAIM=1
+ENV HIP_FORCE_DEV_KERNARG=1
+
+# ── amdsmi (AMD SMI Python bindings) ──────────────────────────────────────────
+# This image's ROCm is the pip-installed TheRock SDK (_rocm_sdk_core /
+# _rocm_sdk_devel), which bundles the amd_smi library/CLI but not the `amdsmi`
+# Python package itself (open upstream gap: github.com/ROCm/TheRock/issues/3054).
+# Without it, `import amdsmi` fails, and Ray's AMD GPU accelerator manager
+# (ray._private.thirdparty.pyamdsmi) silently catches that ImportError and
+# reports 0 GPUs, so verl's resource-pool check fails with
+# "Total available GPUs 0 is less than total desired GPUs 8" even though
+# torch/rocm-smi see all GPUs fine. Fix: install amdsmi from the bundled
+# _rocm_sdk_core source (version-matched to this SDK build, unlike the
+# standalone PyPI `amdsmi` wheel).
+#
+# Installing amdsmi introduces its own duplicate `libamd_smi` ODR clash with
+# rocm_sdk's RTLD_GLOBAL library preloading, which breaks
+# torch.cuda.device_count() (returns 0 despite cuda.is_available()==True).
+# The workaround (from the same upstream issue thread) is to make rocm_sdk
+# preload libraries with RTLD_LOCAL instead of RTLD_GLOBAL.
+RUN ROCM_SDK_CORE_DIR="$(python3 -c 'import _rocm_sdk_core, os; print(os.path.dirname(_rocm_sdk_core.__file__))')" \
+    && pip install --no-cache-dir --no-deps "${ROCM_SDK_CORE_DIR}/share/amd_smi" \
+    && sed -i 's/rtld_global: bool = True/rtld_global: bool = False/g' \
+        "$(python3 -c 'import rocm_sdk, os; print(os.path.dirname(rocm_sdk.__file__))')/__init__.py"
+
+# ── Ray ───────────────────────────────────────────────────────────────────────
+RUN PY_TAG="cp$(echo ${PYTHON_VERSION} | tr -d '.')" && \
+    if [ "$RAY_SOURCE" = "nightly" ]; then \
+      pip uninstall -y ray 2>/dev/null || true && \
+      pip install -U \
+        "ray[default,serve] @ https://s3-us-west-2.amazonaws.com/ray-wheels/latest/ray-3.0.0.dev0-${PY_TAG}-${PY_TAG}-manylinux2014_x86_64.whl"; \
+    else \
+      pip uninstall -y ray 2>/dev/null || true \
+      && pip install --no-cache-dir "${RAY_SPEC}"; \
+    fi
+
+# ── vLLM (ROCm, from source) ──────────────────────────────────────────────────
+# rocm/primus is a training-only image (Megatron-LM / TorchTitan backends) and
+# does not ship vllm at all, so verl's vllm rollout backend fails to import
+# with "vllm version None not supported" unless it's built here. Unlike
+# Dockerfile.old's vllm-dev *build-only* base image, rocm/primus already
+# exposes a working ROCM_PATH/HIP_DEVICE_LIB_PATH pointing at its pip-installed
+# _rocm_sdk_devel (via the /opt/rocm symlink), so no per-RUN path overrides
+# are needed here -- just CMAKE_PREFIX_PATH (unset by default) and the
+# libamdhip64 symlink some of vLLM's build tooling expects under /usr/lib.
+# Built at the v0.23.0 tag (not main HEAD): main currently requires a newer
+# torch::stable::Tensor API (.layout()) than what ships here, which fails
+# with "no member named 'layout' in torch::stable::Tensor" in
+# csrc/libtorch_stable/hip_view.hip.
+ARG VLLM_REPO=https://github.com/vllm-project/vllm.git
+ARG VLLM_TAG=v0.23.0
+ARG MAX_JOBS=64
+ENV MAX_JOBS=${MAX_JOBS}
+RUN git clone --depth 1 --branch ${VLLM_TAG} ${VLLM_REPO} /workspace/vllm \
+    && cd /workspace/vllm \
+    && pip install --no-cache-dir setuptools_scm \
+    && ln -sf ${ROCM_PATH}/lib/libamdhip64.so /usr/lib/libamdhip64.so \
+    && pip install --no-cache-dir -r requirements/rocm.txt \
+    && CMAKE_PREFIX_PATH=${ROCM_PATH}/lib/cmake \
+       pip install --no-cache-dir --no-build-isolation --no-deps -e . \
+    && pip install --no-cache-dir gguf
+
+# ── libz3 (fix tilelang/tvm dlopen failure) ──────────────────────────────────
+# vLLM's requirements/rocm.txt pulls in tilelang (via amd-quark), which
+# bundles a prebuilt libtvm_compiler.so that hard-requires the exact soname
+# libz3.so.4.15. The z3-solver pip wheel *does* ship that exact file, but
+# only inside its own egg dir (not on the linker search path or in the
+# ldconfig cache), and the apt-installed libz3-4 only provides libz3.so.4
+# (no .15 suffix) which doesn't satisfy the NEEDED entry. Without this,
+# `import tilelang` (pulled in transitively by megatron-core's GatedDeltaNet
+# -> fla -> mamba_ssm -> tilelang, needed for Qwen3.5's Gated Delta Net
+# linear-attention layers) fails with
+# "OSError: libz3.so.4.15: cannot open shared object file". Fix: symlink the
+# wheel's bundled .so into a system linker path and refresh ldconfig.
+RUN Z3_LIB_DIR="$(python3 -c 'import z3, os; print(os.path.join(os.path.dirname(z3.__file__), "lib"))')" \
+    && ln -sf "${Z3_LIB_DIR}/libz3.so.4.15" /usr/lib/x86_64-linux-gnu/libz3.so.4.15 \
+    && ldconfig
+
+# ── verl ──────────────────────────────────────────────────────────────────────
+WORKDIR /workspace
+RUN if [ "$VERL_SOURCE" = "nightly" ]; then \
+      git clone --branch main ${VERL_REPO} verl; \
+    else \
+      git clone --branch ${VERL_BRANCH} ${VERL_REPO} verl; \
+    fi \
+    && cd verl \
+    && pip install --no-cache-dir --no-deps -e . \
+    && cp /workspace/verl/examples/grpo_trainer/run_qwen3_5_35b_megatron.sh /workspace/verl/examples/grpo_trainer/run_qwen3_5_35b_megatron_orig.sh
+
+COPY run_qwen3_5_35b_megatron.sh /workspace/verl/examples/grpo_trainer/run_qwen3_5_35b_megatron.sh
+COPY run_qwen3.sh /workspace/run_qwen3.sh
+COPY 0001-test-platform-abstraction-include-amd-auto-detection.patch /workspace/verl/0001-test-platform-abstraction-include-amd-auto-detection.patch
+COPY download_verl_unit_test_fixtures.sh /workspace/download_verl_unit_test_fixtures.sh
+COPY run_verl_unit_tests.sh /workspace/run_verl_unit_tests.sh
+COPY run_unittests.sh /workspace/run_unittests.sh
+
+RUN cd /workspace/verl && \
+    if [ -f tests/plugin/test_platform_abstraction.py ]; then \
+      patch -p1 --forward < /workspace/verl/0001-test-platform-abstraction-include-amd-auto-detection.patch; \
+    fi
+
+# ── CuPy (ROCm) ───────────────────────────────────────────────────────────────
+# verl's NCCL checkpoint engine imports cupy at module load time
+# (verl/checkpoint_engine/nccl_checkpoint_engine.py). Without it, only the
+# "naive" checkpoint backend registers. Use cupy-rocm-7-0 for ROCm 7.x (works
+# with ROCm 7.14 here); do not use cupy-cuda13x (NVIDIA CUDA CI only).
+RUN pip install --no-cache-dir cupy-rocm-7-0 \
+    && python3 -c "import cupy; print('cupy', cupy.__version__)"
+
+# ── torchao ───────────────────────────────────────────────────────────────────
+# Base image ships torchao 0.15.x; PEFT LoRA tests require >=0.16.0
+# (tests/utils/test_fsdp_lora_merge.py).
+RUN pip install --no-cache-dir 'torchao>=0.16.0' \
+    && python3 -c "import torchao; print('torchao', torchao.__version__)"
+
+# ── Qwen3.5-35B-A3B extras (README_qwen3_5_35b_rocm.md, "Install dependencies") ──
+# The base image already provides torch/te, and vllm was built from source
+# above, so only the packages below need to be layered on top for the
+# Qwen3.5 GRPO/geo3k use case. --no-deps is used where appropriate to avoid
+# disturbing the pre-built torch/vllm/triton/aiter that ship in the image.
+# - codetiming/pylatexenc/qwen-vl-utils: small runtime utilities used by verl.
+# - flash-linear-attention: transformers' qwen3_5_moe (and megatron-core's
+#   GatedDeltaNet) require fla.modules / fla.ops.gated_delta_rule for the
+#   Gated Delta Net (GDN) linear-attention layers; without it,
+#   GatedDeltaNet.__init__ raises "FLA is not installed". The PyPI wheel only
+#   ships layers/ and models/, so install the full package from GitHub.
+# - mbridge: Megatron <-> HF weight bridge used by verl.
+# - mistral-common: transformers 5.x's AutoProcessor resolution references
+#   MistralCommonBackend; without it, processor loading fails with
+#   "Failed to create processor".
+# - mathruler: reward function dependency for the geo3k task.
+# - model-hosting-container-standards: required by the vLLM serve entrypoint;
+#   without it rollout init fails with
+#   ModuleNotFoundError: model_hosting_container_standards.
+RUN pip install --no-cache-dir \
+        codetiming \
+        pylatexenc \
+        qwen-vl-utils \
+    && pip install --no-cache-dir --no-deps \
+        "git+https://github.com/fla-org/flash-linear-attention.git" \
+    && pip install --no-cache-dir --no-deps \
+        "git+https://github.com/ISEEKYAN/mbridge.git" \
+    && pip install --no-cache-dir \
+        mistral-common \
+        mathruler \
+        model-hosting-container-standards \
+        transferqueue \
+        "megatron-core==0.18.0" \
+    && pip install --no-cache-dir --upgrade "transformers>=5.12"
+
+# Override any base-image entrypoint for interactive/training use
+ENTRYPOINT ["/bin/bash"]
