@@ -8,11 +8,11 @@ SHELL ["/bin/bash", "-ceuxo", "pipefail"]
 ARG GPU_ARCH="gfx942;gfx950"
 
 ARG VERL_SOURCE="release" # "release" or "nightly"
-ARG VERL_REPO="https://github.com/verl-project/verl.git"
-ARG VERL_BRANCH="v0.8.0"
+ARG VERL_REPO="https://github.com/AMD-Ecosystem/verl.git"
+ARG VERL_BRANCH="amd-integration"
 
 
-ARG RAY_SPEC="ray[default,serve]>=2.47.0"
+ARG RAY_SPEC="ray[default,serve]>=2.55.0"
 ARG RAY_SOURCE="stable"
 ARG PYTHON_VERSION=3.12
 
@@ -120,25 +120,13 @@ RUN Z3_LIB_DIR="$(python3 -c 'import z3, os; print(os.path.join(os.path.dirname(
 # ── verl ──────────────────────────────────────────────────────────────────────
 WORKDIR /workspace
 RUN if [ "$VERL_SOURCE" = "nightly" ]; then \
-      git clone --branch main ${VERL_REPO} verl; \
+      git clone --branch main https://github.com/verl-project/verl.git verl; \
     else \
       git clone --branch ${VERL_BRANCH} ${VERL_REPO} verl; \
     fi \
     && cd verl \
     && pip install --no-cache-dir --no-deps -e . \
     && cp /workspace/verl/examples/grpo_trainer/run_qwen3_5_35b_megatron.sh /workspace/verl/examples/grpo_trainer/run_qwen3_5_35b_megatron_orig.sh
-
-COPY run_qwen3_5_35b_megatron.sh /workspace/verl/examples/grpo_trainer/run_qwen3_5_35b_megatron.sh
-COPY run_qwen3.sh /workspace/run_qwen3.sh
-COPY 0001-test-platform-abstraction-include-amd-auto-detection.patch /workspace/verl/0001-test-platform-abstraction-include-amd-auto-detection.patch
-COPY download_verl_unit_test_fixtures.sh /workspace/download_verl_unit_test_fixtures.sh
-COPY run_verl_unit_tests.sh /workspace/run_verl_unit_tests.sh
-COPY run_unittests.sh /workspace/run_unittests.sh
-
-RUN cd /workspace/verl && \
-    if [ -f tests/plugin/test_platform_abstraction.py ]; then \
-      patch -p1 --forward < /workspace/verl/0001-test-platform-abstraction-include-amd-auto-detection.patch; \
-    fi
 
 # ── CuPy (ROCm) ───────────────────────────────────────────────────────────────
 # verl's NCCL checkpoint engine imports cupy at module load time
