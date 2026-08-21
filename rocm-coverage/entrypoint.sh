@@ -138,6 +138,7 @@ tests/utils/test_seqlen_balancing.py \
 tests/utils/test_flops_counter.py \
 tests/utils/test_linear_cross_entropy.py \
 tests/utils/test_bucketed_weight_transfer.py \
+tests/utils/test_weight_update_utils.py \
 tests/utils/test_shared_memory.py \
 tests/models/test_transformer.py \
 tests/utils/test_padding_on_cpu.py \
@@ -171,10 +172,18 @@ tests/single_controller/test_data_transfer.py"
 VERL_CC_EXTRA_TESTS_DEFAULT="\
 utils/test_torch_functional_rocm.py \
 utils/test_device_rocm.py \
+utils/test_attention_utils_rocm.py \
 utils/test_fsdp_utils_rocm.py \
+utils/test_fsdp_lora_utils_rocm.py \
 utils/test_seqlen_balancing_rocm.py \
 utils/test_import_utils_rocm.py \
+utils/test_flops_counter_rocm.py \
+plugin/test_platform_rocm.py \
+single_controller/test_ray_base_rocm.py \
+single_controller/test_worker_decorator_rocm.py \
 workers/rollout/rollout_vllm/test_rollout_utils_rocm.py \
+workers/rollout/rollout_vllm/test_colocate_worker_extension_rocm.py \
+workers/rollout/rollout_vllm/test_bucketed_sender_rocm.py \
 workers/rollout/rollout_vllm/test_vllm_smoke_rocm.py"
 
 # Tier 2 (>=2 GPUs): Ray worker groups that hard-code 2+ GPU actors / split pools
@@ -188,7 +197,8 @@ tests/single_controller/test_driverfunc_to_worker.py \
 tests/single_controller/test_high_level_scheduling_api.py \
 tests/single_controller/test_colocated_workers.py \
 tests/single_controller/test_colocated_workers_fused.py \
-tests/single_controller/test_split_resource_pool.py"
+tests/single_controller/test_split_resource_pool.py \
+tests/single_controller/test_ray_collectives.py"
     VERL_CC_EXTRA_TESTS_DEFAULT+=" \
 utils/test_dist_collectives_rocm.py \
 utils/test_ulysses_rocm.py"
@@ -199,7 +209,9 @@ if [[ "${VERL_CC_MULTI_TIER4}" == "1" ]]; then
     echo "Appending multi-GPU test tier (>=4 visible GPUs)"
     VERL_CC_TESTS_DEFAULT+=" \
 tests/single_controller/test_worker_group_torch.py \
-tests/single_controller/test_device_mesh_register.py"
+tests/single_controller/test_device_mesh_register.py \
+tests/single_controller/test_worker_group_basics.py \
+tests/single_controller/test_nested_worker.py"
 fi
 
 # Unset means "use the default list"; set-but-empty means "run none from this
