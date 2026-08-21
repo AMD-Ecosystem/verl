@@ -22,7 +22,7 @@ ARG VERL_REPO="https://github.com/verl-project/verl.git"
 ARG VERL_BRANCH="v0.8.0"
 
 
-ARG RAY_SPEC="ray[default,serve]>=2.47.0"
+ARG RAY_SPEC="ray[default,serve]>=2.57.0"
 ARG RAY_SOURCE="stable"
 ARG PYTHON_VERSION=3.12
 
