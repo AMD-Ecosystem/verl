@@ -28,7 +28,7 @@ subtrees:
 
 - caption: About
   entries:
-  - url: https://rocm.blogs.amd.com/artificial-intelligence/verl-large-scale-rocm7/README.html
+  - url: https://rocm.blogs.amd.com/artificial-intelligence/verl/README.html
     title: ROCm verl blog
   - url: https://github.com/AMD-Ecosystem/verl/blob/main/CONTRIBUTING.md
     title: Contribute to verl

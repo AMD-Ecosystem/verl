@@ -23,7 +23,7 @@ Its 3D-HybridEngine reduces memory use and communication overhead when switching
 and inference, improving overall performance.
 
 verl is part of the `AMD LLM Extension toolkit
-<https://rocm.docs.amd.com/projects/rocm-llmext/en/docs-26.02/>`__.
+<https://rocm.docs.amd.com/projects/rocm-llmext/en/docs-26.06/>`__.
 
 The verl public repository is located at `https://github.com/AMD-Ecosystem/verl <https://github.com/AMD-Ecosystem/verl>`__.
 
