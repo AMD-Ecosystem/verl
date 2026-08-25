@@ -7,7 +7,7 @@ SHELL ["/bin/bash", "-ceuxo", "pipefail"]
 # gfx942 = MI300X, gfx950 = MI350X
 ARG GPU_ARCH="gfx942;gfx950"
 
-ARG VERL_SOURCE="release" # "release" or "nightly"
+ARG VERL_SOURCE="nightly" # "release" or "nightly" (nightly uses verl upstream)
 ARG VERL_REPO="https://github.com/AMD-Ecosystem/verl.git"
 ARG VERL_BRANCH="amd-integration"
 
