@@ -18,8 +18,8 @@ SHELL ["/bin/bash", "-ceuxo", "pipefail"]
 ARG GPU_ARCH="gfx942;gfx950"
 
 ARG VERL_SOURCE="nightly" # "release" or "nightly"
-ARG VERL_REPO="https://github.com/verl-project/verl.git"
-ARG VERL_BRANCH="v0.8.0"
+ARG VERL_REPO="https://github.com/AMD-Ecosystem/verl.git"
+ARG VERL_BRANCH="release/0.9.0.amd0"
 
 
 ARG RAY_SPEC="ray[default,serve]>=2.57.0"
@@ -99,7 +99,7 @@ RUN PY_TAG="cp$(echo ${PYTHON_VERSION} | tr -d '.')" && \
 # with "no member named 'layout' in torch::stable::Tensor" in
 # csrc/libtorch_stable/hip_view.hip.
 ARG VLLM_REPO=https://github.com/vllm-project/vllm.git
-ARG VLLM_TAG=v0.23.0
+ARG VLLM_TAG=v0.27.0
 ARG MAX_JOBS=64
 ENV MAX_JOBS=${MAX_JOBS}
 RUN git clone --depth 1 --branch ${VLLM_TAG} ${VLLM_REPO} /workspace/vllm \
@@ -130,7 +130,7 @@ RUN Z3_LIB_DIR="$(python3 -c 'import z3, os; print(os.path.join(os.path.dirname(
 # ── verl ──────────────────────────────────────────────────────────────────────
 WORKDIR /workspace
 RUN if [ "$VERL_SOURCE" = "nightly" ]; then \
-      git clone --branch main ${VERL_REPO} verl; \
+      git clone --branch main https://github.com/verl-project/verl.git verl; \
     else \
       git clone --branch ${VERL_BRANCH} ${VERL_REPO} verl; \
     fi \
