@@ -21,6 +21,7 @@ Utility classes for manage and request LLM servers:
 import asyncio
 import logging
 import os
+import random
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -108,7 +109,7 @@ class GlobalRequestLoadBalancer:
         else:
             min_count = min(self._inflight_requests.values())
             candidates = [sid for sid, count in self._inflight_requests.items() if count == min_count]
-            server_id = candidates[0]
+            server_id = random.choice(candidates)
         self._request_id_to_server[request_id] = server_id
         self._inflight_requests[server_id] += 1
         return server_id, self._servers[server_id]
@@ -400,6 +401,12 @@ class FullyAsyncLLMServerClient(LLMServerClient):
             num_preempted=0,
         )
         min_global_steps, max_global_steps = None, None
+        # Prefix-cache hits are reported per prefill. The base client returns the
+        # server's TokenOutput directly (so sync mode surfaces num_cached_tokens),
+        # but here we rebuild a fresh TokenOutput across resume iterations, so we
+        # must carry it forward explicitly or the consumer sees 0. Take the first
+        # (initial-prompt) prefill's hit count, matching single-prefill semantics.
+        num_cached_tokens = None
 
         while True:
             # 1. generate tokens
@@ -431,6 +438,10 @@ class FullyAsyncLLMServerClient(LLMServerClient):
                 final_output.num_preempted += output.num_preempted
             final_output.stop_reason = output.stop_reason
 
+            # carry the initial prefill's prefix-cache hit count forward
+            if num_cached_tokens is None:
+                num_cached_tokens = output.extra_fields.get("num_cached_tokens")
+
             # update model weights version
             global_steps = output.extra_fields.get("global_steps", None)
             if min_global_steps is None:
@@ -458,6 +469,7 @@ class FullyAsyncLLMServerClient(LLMServerClient):
         final_output.extra_fields["global_steps"] = global_steps
         final_output.extra_fields["min_global_steps"] = min_global_steps
         final_output.extra_fields["max_global_steps"] = max_global_steps
+        final_output.extra_fields["num_cached_tokens"] = num_cached_tokens
         return final_output
 
 

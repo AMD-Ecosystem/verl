@@ -140,7 +140,7 @@ fsdp = [
     "torch==2.11.0",
     "torchvision==0.26.0",
     "torchaudio==2.11.0",
-    "liger-kernel",
+    "liger-kernel>=0.8.2",
     "trl==0.27.0",
     # transformers NOT pinned here: trainers inherit the synced engine's version
     # (vllm 5.5.3 / sglang 5.3.0). See override-dependencies below.
@@ -162,7 +162,7 @@ megatron = [
     "onnxscript",
     "trl==0.27.0",
     "matplotlib",
-    "liger-kernel",
+    "liger-kernel>=0.8.2",
     # Two Megatron<->HF connectors: mbridge (legacy) and megatron-bridge (NVIDIA,
     # imported as megatron.bridge; the migration target, installed deps-free — see
     # [[tool.uv.dependency-metadata]] below). 0.5.2 is the wheelhouse build of the
@@ -295,9 +295,42 @@ verl = [
 # One universal uv.lock: `uv lock` resolves every extra; conflicting extras
 # coexist in the lock but never in one venv. See docs/start/install.rst.
 [tool.uv]
-# x86_64 Linux + Python 3.12 only (keeps the lock single-variant).
+# Linux + Python 3.12 on both CPU arches verl ships CUDA images for: x86_64 and
+# aarch64 (GH200 / GB200 superchips).
+#
+# Arch is a RESOLUTION dimension, NOT an extra dimension. Every backend extra
+# above is spelled exactly once, and `uv sync --extra megatron` installs the
+# right wheels on either host: uv forks the lock per marker and then matches
+# each wheel's own platform tag. Extra names, conflict sets, manage_envs.py
+# combos and every CI invocation are identical on the two arches.
+#
+# That works because everything the cu130 backends need is published for both:
+# torch / torchvision / torchaudio cu130 (download.pytorch.org ships
+# manylinux_2_28_aarch64), vllm / sglang / sglang-kernel / cupy-cuda13x /
+# sglang-router (PyPI), and the three native wheelhouse builds apex /
+# flash-attn / transformer-engine (the wheelhouse builds those on
+# ubuntu-24.04-arm with TORCH_CUDA_ARCH_LIST "9.0;10.0" — the only CUDA parts an
+# arm64 wheel can land on). megatron-bridge is py3-none-any; megatron-core /
+# mbridge build from git. The second entry costs one extra package (sglang's
+# aarch64-only decord2) and leaves every pinned version unchanged.
+#
+# If a package ever IS arch-specific, do NOT fork the backend into
+# `megatron-x86_64` / `megatron-aarch64` extras — that doubles the conflict
+# matrix and every call site. Split it INSIDE the extra with a marker, either on
+# the requirement itself:
+#
+#     "some-x86-only-pkg ; platform_machine == 'x86_64'",
+#
+# or, for more than one package, as a marker-gated sub-extra (the same
+# convention flash-attn-cu130torch211 / cupy-cu130 use to share a pin):
+#
+#     megatron-x86_64 = ["pkg-a", "pkg-b"]                      # in the extras
+#     "verl[megatron-x86_64] ; platform_machine == 'x86_64'",   # inside megatron
+#
+# Either way `--extra megatron` stays the one thing anybody types.
 environments = [
     "python_full_version >= '3.12' and sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "python_full_version >= '3.12' and sys_platform == 'linux' and platform_machine == 'aarch64'",
 ]
 
 # Mutually exclusive extras — at most one per set per `uv sync`. Distinct torch
@@ -341,6 +374,17 @@ override-dependencies = [
     "numpy>=2.0.0",
     "kernels>=0.10.2,<0.11",
     "flash-attn-4 ; platform_machine == 'flash-attn-4-excluded'",
+    # aarch64 only: nvidia-cusparselt-cu13 0.8.0/0.8.1 ship an internal WHEEL tag
+    # of `manylinux2014_sbsa` while the filename says `aarch64`. uv rejects the
+    # mismatch and reinstalls the package on EVERY `uv run`; 100+ concurrent Ray
+    # workers then race deleting libcusparseLt.so.0 and crash torch import
+    # (astral-sh/uv#17711). 0.9.1 fixed the internal tag to `manylinux2014_aarch64`
+    # and moves the lib to nvidia/cu13/lib/, which torch 2.11's _preload_cuda_deps
+    # already searches ("nvidia/cuXX/lib since CUDA 13.0"). SONAME stays .so.0.
+    # x86_64 keeps 0.8.0 (its tag is correct; no reinstall) to avoid churning a
+    # working config.
+    "nvidia-cusparselt-cu13==0.8.0 ; platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "nvidia-cusparselt-cu13==0.9.1 ; platform_machine == 'aarch64' and sys_platform == 'linux'",
 ]
 
 # Skip lock-time metadata builds for git-source packages with no [project] /
@@ -377,8 +421,10 @@ version = "0.1.11"
 requires-dist = []
 
 # Heavy native packages come prebuilt from the verl wheelhouse (cu130 / torch 2.11
-# / cp312) — no source build here. megatron-bridge rides along (pure-python wheel
-# off the same wheelhouse, so no git clone / build either).
+# / cp312, built for x86_64 AND aarch64) — no source build here. megatron-bridge
+# rides along (pure-python wheel off the same wheelhouse, so no git clone / build
+# either), and being py3-none-any it is the one wheelhouse component with a single
+# arch-independent build.
 #
 # The inference engines are deliberately NOT routed: upstream publishes cu130 /
 # torch-2.11 wheels for the pinned vllm / sglang / sglang-kernel versions on PyPI,
@@ -433,8 +479,10 @@ name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
-# verl wheelhouse: prebuilt cu130 / torch-2.11 / cp312 native wheels. Only the
-# packages routed above are pulled here (explicit = true); the rest stay on PyPI.
+# verl wheelhouse: prebuilt cu130 / torch-2.11 / cp312 native wheels, published
+# side by side for linux_x86_64 and linux_aarch64 (uv picks by platform tag).
+# Only the packages routed above are pulled here (explicit = true); the rest stay
+# on PyPI.
 [[tool.uv.index]]
 name = "verl-wheelhouse"
 url = "https://verl-project.github.io/verl-wheelhouse/simple/"
