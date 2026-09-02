@@ -12,7 +12,7 @@ ARG VERL_REPO="https://github.com/AMD-Ecosystem/verl.git"
 ARG VERL_BRANCH="release/0.9.0.amd0"
 
 
-ARG RAY_SPEC="ray[default,serve]>=2.55.0"
+ARG RAY_SPEC="ray[default,serve]==2.58.0"
 ARG RAY_SOURCE="stable"
 ARG PYTHON_VERSION=3.12
 
