@@ -175,7 +175,62 @@ RUN pip install --no-cache-dir \
         model-hosting-container-standards \
         transferqueue \
         "megatron-core==0.18.0" \
-    && pip install --no-cache-dir --upgrade "transformers>=5.12"
+    && pip install --no-cache-dir --upgrade "transformers>=5.12" \
+        "accelerate>=1.14.0"
+
+# ── SGLang (ROCm, from source; coexists with vLLM above) ─────────────────────
+# verl selects the rollout backend at runtime via actor_rollout_ref.rollout.name
+# (vllm or sglang); both engines can be installed in the same image.
+#
+# Adapted from docker/rocm/Dockerfile.rocm (install_sglang stage). Build with
+# --no-deps to avoid pulling CUDA wheels or overriding the Primus torch/vLLM
+# stack. Re-validate SGLANG_TAG when bumping PRIMUS_TAG or VLLM_TAG.
+#
+# Usage in launch scripts:
+#   rollout_name="sglang"
+#   actor_rollout_ref.rollout.name=sglang
+ENV SGLANG_USE_AITER=0
+ENV SGLANG_ATTENTION_BACKEND=triton
+ARG SGLANG_REPO=https://github.com/sgl-project/sglang.git
+# Pinned commit validated on rocm/primus + vLLM ROCm (see Dockerfile.rocm).
+ARG SGLANG_TAG=0801cc05ed202544e2e5c67d6b0a1d454de54fca
+RUN git clone ${SGLANG_REPO} /workspace/sglang \
+    && cd /workspace/sglang \
+    && git fetch --depth 1 origin ${SGLANG_TAG} \
+    && git checkout ${SGLANG_TAG} \
+    # [Bugfix][ROCm] fused_add_rms_norm 6-arg crash on non-AITER path
+    # Ref: https://github.com/sgl-project/sglang/pull/32034
+    && sed -zi 's/            out = torch.empty_like(x)\n            residual_out = torch.empty_like(x)\n            if post_residual_addition is not None:\n                residual = residual + post_residual_addition\n            fused_add_rms_norm(\n                out, x, residual_out, residual, self.weight.data, self.variance_epsilon\n            )\n            return out, residual_out/            if post_residual_addition is not None:\n                residual = residual + post_residual_addition\n            residual = residual.contiguous()\n            fused_add_rms_norm(x, residual, self.weight.data, self.variance_epsilon)\n            return x, residual/' \
+      python/sglang/srt/layers/layernorm.py \
+    && sed -zi 's/                out = torch.empty_like(x)\n                residual_out = torch.empty_like(x)\n                if post_residual_addition is not None:\n                    residual = residual + post_residual_addition\n                fused_add_rms_norm(\n                    out, x, residual_out, residual, w, self.variance_epsilon\n                )\n                return out, residual_out/                if post_residual_addition is not None:\n                    residual = residual + post_residual_addition\n                residual = residual.contiguous()\n                fused_add_rms_norm(x, residual, w, self.variance_epsilon)\n                return x, residual/' \
+      python/sglang/srt/layers/layernorm.py \
+    # transformers>=5.12 already registers qwen3_asr; SGLang must not fail on re-register
+    # Ref: sglang 0e90a6a2ab fix(config): keep Qwen3 ASR registration idempotent
+    && sed -i 's/AutoConfig.register("qwen3_asr", Qwen3ASRConfig)/AutoConfig.register("qwen3_asr", Qwen3ASRConfig, exist_ok=True)/' \
+      python/sglang/srt/configs/qwen3_asr.py \
+    && sed -i 's/AutoConfig.register("qwen3_asr_thinker", Qwen3ASRThinkerConfig)/AutoConfig.register("qwen3_asr_thinker", Qwen3ASRThinkerConfig, exist_ok=True)/' \
+      python/sglang/srt/configs/qwen3_asr.py \
+    # grpc rust extension is optional for verl rollout server mode
+    && sed -i 's|^\[\[tool.setuptools-rust.ext-modules\]\]|# [[tool.setuptools-rust.ext-modules]]|; s|^target = "sglang.srt.grpc._core"|# target = "sglang.srt.grpc._core"|; s|^path = "../rust/sglang-grpc/Cargo.toml"|# path = "../rust/sglang-grpc/Cargo.toml"|; s|^binding = "PyO3"|# binding = "PyO3"|' python/pyproject.toml \
+    && pip install --no-cache-dir \
+        IPython \
+        soundfile==0.13.1 \
+        "git+https://github.com/fzyzcjy/torch_memory_saver.git" \
+    && pip install --no-cache-dir --no-build-isolation --no-deps -e ./python \
+    && cd sgl-kernel \
+    && cp pyproject_rocm.toml pyproject.toml \
+    && rm -rf build \
+    && sed -i 's|f"--amdgpu-target={amdgpu_target}"|"--offload-arch=gfx942", "--offload-arch=gfx950"|' setup_rocm.py \
+    && sed -i '/amdgpu_target not in \["gfx942", "gfx950"\]/,/sys.exit(1)/d' setup_rocm.py \
+    && sed -zi 's/#if HIP_FP8_TYPE_FNUZ\n#include <c10\/util\/Float8_e4m3fnuz.h>\nusing FP8_TYPE = c10::Float8_e4m3fnuz;\nconstexpr auto FP8_E4M3_MAX = 224.0f;\n#else\n#if HIP_FP8_TYPE_E4M3\n#include <c10\/util\/Float8_e4m3fn.h>\nusing FP8_TYPE = c10::Float8_e4m3fn;\nC10_HOST_DEVICE constexpr auto FP8_E4M3_MAX = std::numeric_limits<FP8_TYPE>::max();\n#else\n#error "fp8 is not supported in this processor (arch < gfx942)."\n#endif  \/\/ HIP_FP8_TYPE_E4M3\n#endif  \/\/ HIP_FP8_TYPE_FNUZ/#if defined(__gfx942__)\n#include <c10\/util\/Float8_e4m3fnuz.h>\nusing FP8_TYPE = c10::Float8_e4m3fnuz;\nconstexpr auto FP8_E4M3_MAX = 224.0f;\n#else\n#include <c10\/util\/Float8_e4m3fn.h>\nusing FP8_TYPE = c10::Float8_e4m3fn;\nC10_HOST_DEVICE constexpr auto FP8_E4M3_MAX = std::numeric_limits<FP8_TYPE>::max();\n#endif  \/\/ __gfx942__/' include/utils.h \
+    && python setup_rocm.py install \
+    && python3 -c "import sglang; print('sglang', sglang.__version__)"
+
+# verl rollout defaults for ROCm SGLang (mirrors Dockerfile.rocm install_verl)
+RUN sed -i 's/^  vllm: {}/  vllm:\n    disable_custom_all_reduce: True/' \
+        /workspace/verl/verl/trainer/config/rollout/rollout.yaml \
+    && sed -i 's/^  sglang: {}/  sglang:\n    disable_custom_all_reduce: True\n    attention_backend: triton/' \
+        /workspace/verl/verl/trainer/config/rollout/rollout.yaml
 
 # Override any base-image entrypoint for interactive/training use
 ENTRYPOINT ["/bin/bash"]
