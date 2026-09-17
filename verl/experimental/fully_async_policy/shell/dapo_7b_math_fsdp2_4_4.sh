@@ -73,6 +73,8 @@ n_resp_per_prompt=16
 train_prompt_mini_bsz=32
 total_rollout_steps=$(((512*100)))
 test_freq=10
+# Smoke-run validation cap (override: VAL_MAX_SAMPLES=-1 for full AIME eval)
+val_max_samples=${VAL_MAX_SAMPLES:-8}
 staleness_threshold=0.1
 trigger_parameter_sync_step=4
 require_batches=4
@@ -81,6 +83,7 @@ partial_rollout=True
 python -m verl.experimental.fully_async_policy.fully_async_main \
     data.train_files="${TRAIN_FILE}" \
     data.val_files="${TEST_FILE}" \
+    data.val_max_samples=${val_max_samples} \
     data.prompt_key=prompt \
     data.truncation='left' \
     data.max_prompt_length=${max_prompt_length} \
