@@ -36,7 +36,7 @@ Build verl from source
 
    .. code-block:: bash
 
-      docker build -t verl-release-v0.9.0amd0 -f Dockerfile.rocm715 .
+      docker build -t verl-release-v0.9.0amd0 -f Dockerfile.rocm .
 
    This builds an image with verl 0.9.0 and the required dependencies, including
    PyTorch 2.12.0, vLLM 0.27.0, and Ray 2.58.0.
