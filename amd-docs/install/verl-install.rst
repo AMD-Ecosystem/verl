@@ -90,7 +90,7 @@ After starting the container, verify that verl and ROCm are working correctly.
       python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
 
    This should print ``True`` and the name of your AMD Instinct GPU (for example,
-   ``AMD Instinct MI300X``, ``MI325X``, or ``MI350X``).
+   ``AMD Instinct MI300X``, ``MI325X``, or ``MI355X``).
 
 3. Verify key dependency versions:
 
