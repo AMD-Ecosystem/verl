@@ -82,10 +82,11 @@ ROCm deployment and runtime
 ====================================================================
 
 On ROCm, verl uses the same HybridFlow controller and worker layout as
-upstream, with AMD-specific container images and runtime.
+upstream, with an AMD-specific container image and runtime.
 
-- ``rocm/verl`` ships verl, PyTorch, ROCm, and vLLM for the default
-  AMD rollout stack.
+- Build the Docker image from ``docker/rocm/Dockerfile.rocm``. That image
+  includes verl, PyTorch, ROCm userspace, and vLLM for the default AMD
+  rollout stack.
 
 - Ray worker placement includes HIP device visibility handling for
   multi-GPU scheduling on ROCm clusters.

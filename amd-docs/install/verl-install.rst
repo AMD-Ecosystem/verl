@@ -20,6 +20,9 @@ To use verl `0.9.0 <https://github.com/volcengine/verl/releases/tag/v0.9.0>`__, 
 - **Python:** `3.12 <https://www.python.org/downloads/release/python-31213/>`__
 - **vLLM:** `0.27.0 <https://github.com/vllm-project/vllm/releases/tag/v0.27.0>`__
 
+Install verl
+====================================================================
+
 To run verl with ROCm enabled, build from source using the provided Dockerfile.
 
 Build verl from source
@@ -45,6 +48,7 @@ Build verl from source
 
    .. code-block:: bash
 
+      mkdir -p $HOME/verl-workspace
       docker run -it \
          --name verl-release \
          --device /dev/kfd \
@@ -57,13 +61,15 @@ Build verl from source
          --shm-size=2048g \
          --ulimit memlock=-1 \
          --ulimit stack=67108864 \
+         -v $HOME/verl-workspace:/verl-workspace \
          -w /workspace \
          verl-release-v0.9.0amd0 \
          /bin/bash
 
    .. note::
 
-      The ``--shm-size`` parameter allocates shared memory for the container. It can be adjusted based on your system's resources.
+      ``--shm-size=2048g`` is the recommended shared-memory allocation for
+      large multi-GPU ROCm training in this image.
 
 Test the verl installation
 ================================================================================
