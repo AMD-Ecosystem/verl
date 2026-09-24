@@ -26,7 +26,7 @@ Install verl
 To run verl with ROCm enabled, build from source using the provided Dockerfile.
 
 Build verl from source
-================================================================================
+--------------------------------------------------------------------
 
 1. Clone the verl repository containing the Dockerfile:
 
@@ -72,7 +72,7 @@ Build verl from source
       large multi-GPU ROCm training in this image.
 
 Test the verl installation
-================================================================================
+====================================================================
 
 After starting the container, verify that verl and ROCm are working correctly.
 
