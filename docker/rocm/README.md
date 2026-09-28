@@ -1,100 +1,134 @@
-# ROCm (AMD GPU) Dockerfile of verl
+# ROCm Dockerfile for verl 0.9.0.amd0
 
-This directory provides the Docker recipe for running verl on **AMD GPUs with
-the ROCm software stack**. The NVIDIA images described in
-[`../README.md`](../README.md) do not work on AMD hardware, so use
-[`Dockerfile.rocm`](Dockerfile.rocm) instead.
+[`Dockerfile.rocm`](Dockerfile.rocm) builds a training image for **AMD Instinct GPUs**
+from `rocm/primus:v26.7`. Primus ships the training stack. This Dockerfile adds
+the pieces it does not: **Ray 2.58.0**, **vLLM 0.27.0** built from source,
+SGLang, verl `release/0.9.0.amd0`, and the Qwen3.5 extras.
 
-For an end-to-end walkthrough (build, run, and example PPO/GRPO commands), see
-the tutorial: [`docs/amd_tutorial/amd_quick_start.rst`](../../docs/amd_tutorial/amd_quick_start.rst).
+The NVIDIA Dockerfiles in [`../README.md`](../README.md) do not run on AMD
+hardware. Use `Dockerfile.rocm` for this release.
 
-> The other `Dockerfile.rocm*` / `Apptainerfile.rocm` files in this directory are
-> kept only as historical references for older verl releases (ROCm 6.x, pinned
-> verl 0.3.x / 0.4.x). New work should target `Dockerfile.rocm`.
+Other `Dockerfile.rocm*` and `Apptainerfile.rocm` files in this directory are
+older recipes. New work should use `Dockerfile.rocm`.
 
-## Supported Hardware
+## What you get
 
-The image targets the following GPU architectures (`GPU_ARCH`):
-
-- `gfx942` — MI300 series (MI300X / MI300A / MI325X)
-- `gfx950` — MI350 series (MI350X / MI355X)
-
-Other architectures (e.g. `gfx90a` for MI200/MI250) can be built by overriding
-`GPU_ARCH`, but are not validated here.
-
-## Key Versions
-
-| Component | Version |
-| --------- | ------- |
-| ROCm | 7.14 |
+| Component | Pin in `Dockerfile.rocm` |
+| --- | --- |
+| Base image | `rocm/primus:v26.7` |
+| verl | `AMD-Ecosystem/verl` branch `release/0.9.0.amd0` |
 | Python | 3.12 |
-| PyTorch | 2.12.0+rocm7.14 |
-| Triton | 3.7.0 |
-| vLLM | 0.22.1rc1 source @ `18d87a87d` |
-| SGLang | 0.5.15 source @ `0801cc05ed` |
-| Flash Attention | ROCm fork (CK backend) @ `v2.8.3` |
-| TransformerEngine |2.14.0 ROCm fork @ `e6ede467` |
-| aiter | ROCm @ `b5e03ed19` |
-| megatron-core | 0.18.0 |
+| Ray | `ray[default,serve]==2.58.0` |
+| vLLM | tag `v0.27.0`, built from source with `VLLM_TARGET_DEVICE=rocm` |
+| GPU arch | `gfx942` (MI300 series) and `gfx950` (MI350 series) |
+| Megatron-Core | 0.18.0 |
+| CuPy | `cupy-rocm-7-0` |
 
+The image also installs SGLang from a pinned commit, `amdsmi` so Ray can see
+Instinct GPUs, and sets `SGLANG_ATTENTION_BACKEND=triton`.
 
-## What the Image Contains
+## Prerequisites
 
-Starting from a base image  `rocm/primus:v26.4` , `Dockerfile.rocm` installs:
+1. A ROCm host driver that matches the Primus v26.7 image.
+2. Docker with access to `/dev/kfd` and `/dev/dri`.
+3. BuildKit. If the build fails with `--mount option requires BuildKit`, install
+   the `buildx` plugin and prefix the command with `DOCKER_BUILDKIT=1`.
 
-**Prebuilt (downloaded), not compiled:**
-- ROCm 7.14 runtime + dev packages (via the `repo.radeon.com` apt repo)
-- `torch`, `apex`, `torchaudio`, `torchvision`, `triton` — prebuilt in base images.
-- Flash Attention, TransformerEngine (ROCm fork)
+## Install with vLLM 0.27.0 and Ray 2.58.0
 
-**Built from source (pinned commits):**
-- vLLM
-- SGLang
+Those versions are the Dockerfile defaults. Pass them explicitly so a later
+default change cannot change the image.
 
-**Also installed:** `cupy-rocm`, `mbridge`, `megatron-core`, `megatron-bridge`,
-`transformers`, and the verl package itself.
+From a clone of this branch:
 
+```bash
+git clone --recursive -b release/0.9.0.amd0 https://github.com/AMD-Ecosystem/verl.git
+cd verl
 
-
-## Building Locally
-
-The Dockerfile uses BuildKit cache mounts (`RUN --mount=...`), so **BuildKit is
-required** (with the `buildx` plugin). If you see
-`the --mount option requires BuildKit`, install `buildx`
-(`sudo apt-get install -y docker-buildx`) and prefix the build with
-`DOCKER_BUILDKIT=1`.
-
-```sh
 DOCKER_BUILDKIT=1 docker build \
-    -f docker/rocm/Dockerfile.rocm \
-    -t verl-rocm:local .
+  -f docker/rocm/Dockerfile.rocm \
+  --build-arg RAY_SOURCE=stable \
+  --build-arg RAY_SPEC='ray[default,serve]==2.58.0' \
+  --build-arg VLLM_REPO=https://github.com/vllm-project/vllm.git \
+  --build-arg VLLM_TAG=v0.27.0 \
+  --build-arg VERL_SOURCE=release \
+  --build-arg VERL_BRANCH=release/0.9.0.amd0 \
+  --build-arg GPU_ARCH='gfx942;gfx950' \
+  --build-arg MAX_JOBS=64 \
+  -t verl-rocm:0.9.0.amd0-vllm0.27.0-ray2.58.0 \
+  .
 ```
 
-### Useful build arguments
+What those arguments do:
 
-| Build arg | Default | Purpose |
-| --------- | ------- | ------- |
-| `GPU_ARCH` | `gfx942;gfx950` | GPU architectures to compile kernels for. Set to a single arch (e.g. `gfx942`) to roughly halve Flash Attention build time. |
-| `PYTHON_VERSION` | `3.12` | Python version. Note: the prebuilt wheel URLs are pinned to the `cp312` ABI; changing this also requires updating those URLs. |
-| `MAX_JOBS` | `$(nproc)` | Parallel compile jobs. Lower it (e.g. `64`) if the vLLM build runs out of memory. |
-|`VLLM_TAG` / `AITER_TAG` | pinned | Source commits for the from-source components. |
+| Build arg | Value | Effect |
+| --- | --- | --- |
+| `RAY_SOURCE` | `stable` | Installs the pinned wheel. `nightly` ignores `RAY_SPEC` and installs a Ray 3.0 dev wheel. |
+| `RAY_SPEC` | `ray[default,serve]==2.58.0` | Uninstalls the Ray package already in the base image, then installs Ray **2.58.0** with the `default` and `serve` extras. |
+| `VLLM_TAG` | `v0.27.0` | Clones vLLM at that tag and builds it for ROCm. Do not use `main`; newer trees need a `torch::stable::Tensor` API this Primus PyTorch does not provide. |
+| `VERL_SOURCE` | `release` | Clones `VERL_REPO` at `VERL_BRANCH`. `nightly` clones upstream `verl-project/verl` `main` instead. |
+| `GPU_ARCH` | `gfx942;gfx950` | Kernels for MI300 and MI350. Use one arch to shorten the vLLM and SGLang builds. |
+| `MAX_JOBS` | `64` | Parallel compile jobs. Lower this if the vLLM or `sgl-kernel` build runs out of memory. |
 
-Example — build only for MI300 with a memory-safe job count:
+Build for one GPU family:
 
-```sh
-DOCKER_BUILDKIT=1 docker build \
-    -f docker/rocm/Dockerfile.rocm \
-    --build-arg GPU_ARCH=gfx942 \
-    --build-arg MAX_JOBS=64 \
-    -t verl-rocm:mi300 .
+```bash
+# MI355X / MI350X
+--build-arg GPU_ARCH=gfx950
+
+# MI300X / MI325X
+--build-arg GPU_ARCH=gfx942
 ```
 
-## Release History
+## Run the image
 
-- 2026/07/20: ROCm 7.14 stack — torch==2.12.0, triton==3.7.0, vLLM @`18d87a87d`,   SGLang @`0801cc05ed`, 
-  Flash Attention (CK) @`v2.8.3`, TransformerEngine @`e6ede467`,
-  aiter @`b5e03ed19`, megatron-core==0.18.0; targets gfx942 / gfx950.
+```bash
+docker run -it --rm \
+  --device /dev/kfd --device /dev/dri \
+  --group-add video \
+  --cap-add SYS_PTRACE \
+  --security-opt seccomp=unconfined \
+  --ipc=host \
+  --shm-size 64G \
+  -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
+  verl-rocm:0.9.0.amd0-vllm0.27.0-ray2.58.0
+```
 
-- 2026/06/03: ROCm 7.0.2 stack — torch==2.9.1, triton==3.5.1, vLLM @`1ff9d3353`,
-  Flash Attention (CK) @`83f9e450`, TransformerEngine @`386bd316`,
-  aiter @`45c428e54`, megatron-core==0.16.0; targets gfx942 / gfx950.
+Do not mount a host directory over `/workspace`. That hides the image's
+`/workspace/verl`, `/workspace/vllm`, and `/workspace/sglang` trees. Mount a
+subdirectory, such as `/workspace/logs`, if you need to keep files on the host.
+
+## Check the install
+
+Inside the container:
+
+```bash
+python3 - <<'PY'
+import ray, vllm, torch
+print("ray ", ray.__version__)
+print("vllm", vllm.__version__)
+print("torch", torch.__version__, "hip", torch.version.hip)
+print("gpus", torch.cuda.device_count())
+PY
+python3 -c "import amdsmi; print('amdsmi ok')"
+```
+
+Expect `ray  2.58.0` and `vllm 0.27.0`. `torch.cuda.device_count()` must match
+the GPUs `rocm-smi` lists. A count of `0` means Ray will later fail with
+"Total available GPUs 0 is less than total desired GPUs".
+
+## Choose the rollout engine
+
+Both engines are in the image. verl selects one at launch:
+
+```bash
+# vLLM (image default path)
+actor_rollout_ref.rollout.name=vllm
+
+# SGLang
+actor_rollout_ref.rollout.name=sglang
+```
+
+vLLM AITER flags (`VLLM_ROCM_USE_AITER=1` and the FP8 padding variables) are
+set in the image. SGLang defaults are `SGLANG_USE_AITER=0` and
+`SGLANG_ATTENTION_BACKEND=triton`. Keep the Triton attention backend on ROCm.
