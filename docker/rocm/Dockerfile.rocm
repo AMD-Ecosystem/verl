@@ -100,8 +100,8 @@ RUN git clone --depth 1 --branch ${VLLM_TAG} ${VLLM_REPO} /workspace/vllm \
     && CMAKE_PREFIX_PATH=${ROCM_PATH}/lib/cmake \
        pip install --no-cache-dir --no-build-isolation --no-deps . \
     && pip install --no-cache-dir gguf \
-    # Drop Rust tree after build: Trivy flags pyo3/rustls-webpki in Cargo.lock;
-    # the compiled extensions are already installed into site-packages.
+    # Drop Rust tree after build: Cargo.lock is not needed at runtime and the
+    # compiled extensions are already installed into site-packages.
     && rm -rf /workspace/vllm/rust
 
 # ── libz3 (fix tilelang/tvm dlopen failure) ──────────────────────────────────
@@ -233,8 +233,8 @@ RUN git clone ${SGLANG_REPO} /workspace/sglang \
     && python setup_rocm.py install \
     && python3 -c "import sglang; print('sglang', sglang.__version__)"
 
-# ── Security / secret-scan remediation ────────────────────────────────────────
-# Patch OS packages flagged HIGH by Trivy (openssl / libssl3t64 / linux-libc-dev).
+# ── Security remediation ──────────────────────────────────────────────────────
+# Patch known-vulnerable OS packages (openssl / libssl3t64 / linux-libc-dev).
 RUN export DEBIAN_FRONTEND=noninteractive \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -243,7 +243,7 @@ RUN export DEBIAN_FRONTEND=noninteractive \
         linux-libc-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Patch Python packages flagged HIGH by Trivy.
+# Patch known-vulnerable Python packages.
 RUN pip install --no-cache-dir -U \
         'tornado>=6.5.9' \
         'urllib3>=2.8.0' \
@@ -251,10 +251,28 @@ RUN pip install --no-cache-dir -U \
         'virtualenv>=21.7.12' \
         'wheel>=0.46.2'
 
-# Keep runtime sources under /workspace/{vllm,sglang,verl}; remove scan bait
-# (nested Dockerfiles, k8s/helm manifests, docs/examples that Trivy misconfig-
-# scans) and leftover VCS metadata. Packages themselves are non-editable
-# installs into site-packages.
+# Remove stale pip/setuptools vendored copies (top-level pkgs already patched
+# above). setuptools still ships jaraco.context 5.3.0 / wheel 0.45.1 under
+# _vendor; pip may still vendor urllib3 2.7.0.
+RUN pip install --no-cache-dir -U 'pip>=26' 'setuptools>=80' \
+    && SITE="$(python3 -c 'import site; print(site.getsitepackages()[0])')" \
+    && rm -rf \
+        ${SITE}/setuptools/_vendor/jaraco.context-*.dist-info \
+        ${SITE}/setuptools/_vendor/jaraco/context \
+        ${SITE}/setuptools/_vendor/jaraco/context.py \
+        ${SITE}/setuptools/_vendor/wheel-*.dist-info \
+        ${SITE}/setuptools/_vendor/wheel \
+    && python3 -c "from pathlib import Path; import shutil, pip, urllib3; \
+vendor = Path(pip.__file__).resolve().parent / '_vendor' / 'urllib3'; \
+src = Path(urllib3.__file__).resolve().parent; \
+vendor.exists() and shutil.rmtree(vendor); \
+shutil.copytree(src, vendor); \
+print('pip vendor urllib3 replaced from', src, '->', vendor); \
+print('urllib3', urllib3.__version__)"
+
+# Keep runtime sources under /workspace/{vllm,sglang,verl}; remove nested
+# Dockerfiles, k8s/helm manifests, docs/examples, and leftover VCS metadata.
+# Packages themselves are non-editable installs into site-packages.
 RUN rm -rf \
         /workspace/vllm/.git \
         /workspace/vllm/docker \
@@ -268,8 +286,10 @@ RUN rm -rf \
         /workspace/sglang/examples \
         /workspace/sglang/experimental \
         /workspace/sglang/sgl-model-gateway/e2e_test \
+        /workspace/sglang/sgl-kernel/Dockerfile \
         /workspace/verl/.git \
         /workspace/verl/docker \
+        /workspace/.manifest/Dockerfile \
     && find /workspace -type d -name .git -prune -exec rm -rf {} + 2>/dev/null || true \
     && rm -rf /root/.cache/pip \
     && find /tmp -mindepth 1 -delete 2>/dev/null || true
