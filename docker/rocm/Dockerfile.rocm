@@ -309,19 +309,9 @@ RUN if ! id -u verl >/dev/null 2>&1; then \
 # that variable from the current user's home on every Python startup. A fixed
 # /home/verl path would fail for any other uid. Fall back to /tmp when ~ is
 # not writable.
-RUN python3 - <<'PY'
-from pathlib import Path
-import site
-line = (
-    'import os; os.environ.setdefault("AITER_JIT_DIR", '
-    'os.path.join(os.path.expanduser("~"), ".aiter", "jit") '
-    'if os.access(os.path.expanduser("~"), os.W_OK) '
-    'else f"/tmp/aiter-jit-{os.getuid()}")\n'
-)
-path = Path(site.getsitepackages()[0]) / "aiter-jit-dir.pth"
-path.write_text(line)
-print("wrote", path)
-PY
+# Keep this as python3 -c. A shell heredoc is not a Dockerfile heredoc on the
+# legacy builder, so a following "from pathlib" line is parsed as FROM.
+RUN python3 -c 'from pathlib import Path; import site; line = ("import os; os.environ.setdefault(\"AITER_JIT_DIR\", os.path.join(os.path.expanduser(\"~\"), \".aiter\", \"jit\") if os.access(os.path.expanduser(\"~\"), os.W_OK) else f\"/tmp/aiter-jit-{os.getuid()}\")\n"); path = Path(site.getsitepackages()[0]) / "aiter-jit-dir.pth"; path.write_text(line); print("wrote", path)'
 USER verl
 WORKDIR /workspace
 
