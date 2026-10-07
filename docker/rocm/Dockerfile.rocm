@@ -267,8 +267,10 @@ vendor = Path(pip.__file__).resolve().parent / '_vendor' / 'urllib3'; \
 src = Path(urllib3.__file__).resolve().parent; \
 vendor.exists() and shutil.rmtree(vendor); \
 shutil.copytree(src, vendor); \
+vt = Path(pip.__file__).resolve().parent / '_vendor' / 'vendor.txt'; \
+vt.write_text(vt.read_text().replace('urllib3==2.7.0', f'urllib3=={urllib3.__version__}')); \
 print('pip vendor urllib3 replaced from', src, '->', vendor); \
-print('urllib3', urllib3.__version__)"
+print('urllib3', urllib3.__version__, 'vendor.txt updated')"
 
 # Keep runtime sources under /workspace/{vllm,sglang,verl}; remove nested
 # Dockerfiles, k8s/helm manifests, docs/examples, and leftover VCS metadata.
@@ -302,6 +304,24 @@ RUN if ! id -u verl >/dev/null 2>&1; then \
     fi \
     && usermod -aG video,render verl 2>/dev/null || true \
     && chown -R verl:verl /workspace
+# aiter imports a JIT extension from outside site-packages only when
+# AITER_JIT_DIR is set. The package jit directory stays root-owned, so set
+# that variable from the current user's home on every Python startup. A fixed
+# /home/verl path would fail for any other uid. Fall back to /tmp when ~ is
+# not writable.
+RUN python3 - <<'PY'
+from pathlib import Path
+import site
+line = (
+    'import os; os.environ.setdefault("AITER_JIT_DIR", '
+    'os.path.join(os.path.expanduser("~"), ".aiter", "jit") '
+    'if os.access(os.path.expanduser("~"), os.W_OK) '
+    'else f"/tmp/aiter-jit-{os.getuid()}")\n'
+)
+path = Path(site.getsitepackages()[0]) / "aiter-jit-dir.pth"
+path.write_text(line)
+print("wrote", path)
+PY
 USER verl
 WORKDIR /workspace
 
