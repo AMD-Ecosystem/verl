@@ -66,11 +66,20 @@ print(*[f'{p} {v(p)}' for p in ['vllm', 'tilelang', 'xgrammar', 'apache-tvm-ffi'
 
 
 FROM install_vllm AS install_verl
-# verl main as of 2026-11-13: transformers<5.17, so it stays compatible with
-# vLLM v0.32.0 (transformers>=5.16.1,<5.20).
+# nightly: upstream main at build time. release: the VERL_TAG commit, which
+# stays inside vLLM v0.32.0's transformers range (transformers>=5.16.1,<5.20).
+ARG VERL_SOURCE=release
 ARG VERL_TAG="3503bec3420dbb8ee67f8c9da6c0721570ae75ac"
 RUN cd /workspace && git clone https://github.com/verl-project/verl.git && \
-    cd verl && git checkout ${VERL_TAG} && \
+    cd verl && \
+    if [ "${VERL_SOURCE}" = "nightly" ]; then \
+      git checkout main; \
+    elif [ "${VERL_SOURCE}" = "release" ]; then \
+      git checkout ${VERL_TAG}; \
+    else \
+      echo "VERL_SOURCE must be nightly or release, got: ${VERL_SOURCE}" >&2 && exit 1; \
+    fi && \
+    git show --oneline -s && \
     git submodule update --init --recursive && \
     sed -i 's/^  vllm: {}/  vllm:\n    disable_custom_all_reduce: True/' /workspace/verl/verl/trainer/config/rollout/rollout.yaml && \
     sed -i 's/^  sglang: {}/  sglang:\n    disable_custom_all_reduce: True\n    attention_backend: triton/' /workspace/verl/verl/trainer/config/rollout/rollout.yaml && \

@@ -30,7 +30,7 @@ Other architectures (e.g. `gfx90a` for MI200/MI250) are not validated here.
 | Python | 3.12 (`/opt/venv`) |
 | vLLM | v0.32.0 source @ `5df63a720` + [vllm#61872](https://github.com/vllm-project/vllm/pull/61872) (`3b43d2b01c`) |
 | SGLang | source @ `0801cc05ed` (Python package installed with `--no-deps`) |
-| verl | `3503bec34` (`VERL_TAG`) |
+| verl | `VERL_SOURCE=release` (default) checks out `VERL_TAG` `3503bec34`; `nightly` checks out upstream `main` |
 | causal-conv1d | `e940ead2` |
 | megatron-core | 0.19.2 |
 | megatron-bridge | 0.6.2 (`--no-deps`) |
@@ -58,7 +58,7 @@ Starting from the base image `rocm/primus:v26.9.1`, `Dockerfile.rocm` adds:
 **Built from source (pinned commits):**
 - causal-conv1d (`e940ead2`)
 - vLLM (`5df63a720` + vllm#61872)
-- verl (`3503bec34`), installed with `pip install .`
+- verl, installed with `pip install .`. `VERL_SOURCE=release` (the default) checks out `VERL_TAG` (`3503bec34`). `VERL_SOURCE=nightly` checks out upstream `main` at build time. Any other value fails the build.
 - SGLang (`0801cc05ed`): the Python package and `sgl-kernel`
 
 **Installed from PyPI or GitHub:** `megatron-core` 0.19.2, `megatron-bridge`
@@ -102,9 +102,13 @@ The vLLM build uses `MAX_JOBS=64`.
 | `VLLM_TAG` | `5df63a7203cdb9328d824a27b682e77c7b9928be` | vLLM commit built from source. |
 | `VLLM_PR_61872` | `3b43d2b01c2fb667101746e1acd33b6a3c9d0863` | vLLM PR applied to `vllm/` after checkout. |
 | `SGLANG_TAG` | `0801cc05ed202544e2e5c67d6b0a1d454de54fca` | SGLang commit built from source. |
-| `VERL_TAG` | `3503bec3420dbb8ee67f8c9da6c0721570ae75ac` | verl commit installed into the image. |
+| `VERL_SOURCE` | `release` | `nightly` checks out upstream `main`. `release` checks out `VERL_TAG`. |
+| `VERL_TAG` | `3503bec3420dbb8ee67f8c9da6c0721570ae75ac` | verl commit used when `VERL_SOURCE=release`. |
 
 ## Release History
+
+- 2026/11/20: `VERL_SOURCE` selects the verl checkout. `release` (the default)
+  checks out `VERL_TAG`. `nightly` checks out upstream `main` at build time.
 
 - 2026/11/20: `BASE_IMAGE` moved to `rocm/primus:v26.9.1`. The Qwen3.5 Megatron
   stack now matches `pipelines/verl/Dockerfile` (nightly path): megatron-bridge
