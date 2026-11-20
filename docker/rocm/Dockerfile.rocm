@@ -74,34 +74,34 @@ RUN cd /workspace && git clone https://github.com/verl-project/verl.git && \
     sed -i 's/^  sglang: {}/  sglang:\n    disable_custom_all_reduce: True\n    attention_backend: triton/' /workspace/verl/verl/trainer/config/rollout/rollout.yaml && \
     pip install --no-cache-dir . 
     
-# for qwen3.5. This verl pin imports megatron.bridge, so use the pipeline
-# image's nightly set: megatron-bridge 0.6.2 (already registers qwen3_asr
-# with exist_ok), megatron-energon 7.4.1, and megatron-core 0.19.2.
-# Bridge 0.6.2 requires wandb==0.29.0 and hard-imports modelopt; both are
-# installed here because bridge itself is --no-deps. The PyPI
-# flash-linear-attention wheel omits the ops package, so install it from
-# GitHub and drop the autotune key Triton 3.9 rejects.
+# Qwen3.5 extras, matching pipelines/verl/Dockerfile (nightly path).
+# This verl pin imports megatron.bridge, so it gets megatron-bridge 0.6.2
+# (already registers qwen3_asr with exist_ok), megatron-energon 7.4.1, and
+# megatron-core 0.19.2. Bridge is --no-deps and requires wandb==0.29.0.
+# Energon is --no-deps, so its runtime deps are installed explicitly.
+# s3fs is --no-deps: a normal install pulls aiobotocore, which downgrades
+# botocore, wrapt, and multidict. The PyPI flash-linear-attention wheel
+# omits the ops package, so install it from GitHub and drop the autotune
+# key Triton 3.9 rejects.
+RUN pip install --no-cache-dir 'wandb==0.29.0' \
+    && python3 -c "import wandb; print('wandb', wandb.__version__)"
+RUN pip install --no-cache-dir 'torchao>=0.16.0' \
+    && python3 -c "import torchao; print('torchao', torchao.__version__)"
+RUN pip install --no-cache-dir torchdata \
+    && python3 -c "from torchdata.stateful_dataloader import StatefulDataLoader; import torchdata; print('torchdata', torchdata.__version__)"
+RUN pip install --no-cache-dir cupy-rocm-7-0 \
+    && python3 -c "import cupy; print('cupy', cupy.__version__)"
 RUN pip install --no-cache-dir \
-    codetiming \
-    pylatexenc \
-    qwen_vl_utils==0.0.14 \
-    mathruler==0.1.0 \
-    datasets==5.0.0 \
-    accelerate==1.14.0 \
-    TransferQueue==0.1.11 \
-    'wandb==0.29.0' \
-    'torchao>=0.16.0' \
-    torchdata \
-    mistral-common \
-    model-hosting-container-standards \
+        codetiming \
+        pylatexenc \
+        qwen-vl-utils \
     && pip install --no-cache-dir --no-deps \
         "git+https://github.com/fla-org/flash-linear-attention.git" \
-    && python3 -c 'from pathlib import Path; p = Path("/opt/venv/lib/python3.12/site-packages/fla/ops/cp/chunk_delta_h.py"); t = p.read_text() if p.is_file() else ""; old = "key=[\x27HV\x27, \x27K\x27, \x27V\x27, \x27BT\x27]"; new = "key=[\x27HV\x27, \x27K\x27, \x27V\x27]"; print("fla autotune key", old in t); p.write_text(t.replace(old, new, 1)) if old in t else None' \
+    && f=/opt/venv/lib/python3.12/site-packages/fla/ops/cp/chunk_delta_h.py \
+    && { [ ! -f "$f" ] || sed -i "s/key=\\['HV', 'K', 'V', 'BT'\\]/key=['HV', 'K', 'V']/" "$f"; } \
     && pip install --no-cache-dir --no-deps \
-        megatron-bridge==0.6.2 \
-        megatron-energon==7.4.1 \
-        nvidia-modelopt==0.47.0 \
-        pulp==3.3.2 \
+        "megatron-bridge==0.6.2" \
+        "megatron-energon==7.4.1" \
     && pip install --no-cache-dir \
         "multi-storage-client>=0.40.0" \
         braceexpand \
@@ -110,9 +110,15 @@ RUN pip install --no-cache-dir \
         "rapidyaml>=0.10.0" \
         webdataset \
     && pip install --no-cache-dir --no-deps "s3fs==2025.3.0" \
-    && pip install --no-cache-dir "megatron-core==0.19.2"
-
-RUN pip install --no-cache-dir cupy-rocm-7-0==14.1.1
+    && python3 -c "import braceexpand, filetype, ryml, webdataset, multistorageclient; from megatron.energon import WorkerConfig; print('energon deps ok')" \
+    && pip install --no-cache-dir "megatron-core==0.19.2" \
+    && pip install --no-cache-dir \
+        mistral-common \
+        mathruler \
+        model-hosting-container-standards \
+        transferqueue \
+    && pip install --no-cache-dir --upgrade "transformers>=5.12" \
+        "accelerate>=1.14.0"
 
 FROM install_verl AS install_sglang
 
@@ -140,11 +146,46 @@ RUN cd /workspace && git clone https://github.com/sgl-project/sglang.git && \
     sed -i 's/AutoConfig.register("qwen3_asr_thinker", Qwen3ASRThinkerConfig)/AutoConfig.register("qwen3_asr_thinker", Qwen3ASRThinkerConfig, exist_ok=True)/' \
       python/sglang/srt/configs/qwen3_asr.py && \
     sed -i 's|^\[\[tool.setuptools-rust.ext-modules\]\]|# [[tool.setuptools-rust.ext-modules]]|; s|^target = "sglang.srt.grpc._core"|# target = "sglang.srt.grpc._core"|; s|^path = "../rust/sglang-grpc/Cargo.toml"|# path = "../rust/sglang-grpc/Cargo.toml"|; s|^binding = "PyO3"|# binding = "PyO3"|' python/pyproject.toml && \
-    pip install --no-cache-dir --no-build-isolation --no-deps \
-      -e ./python \
+    python3 -c 'import torch, pathlib; pathlib.Path("/tmp/rocm-constraints.txt").write_text(f"torch=={torch.__version__}\n")' && \
+    pip install --no-cache-dir -c /tmp/rocm-constraints.txt \
+      IPython \
       soundfile==0.13.1 \
-      "git+https://github.com/fzyzcjy/torch_memory_saver.git" && \
-    pip install --no-cache-dir IPython==9.15.0 && \
+      "git+https://github.com/fzyzcjy/torch_memory_saver.git" \
+      aiohttp \
+      "anthropic>=0.20.0" \
+      blobfile==3.0.0 \
+      compressed-tensors \
+      datasets \
+      distro \
+      easydict \
+      einops \
+      fastapi \
+      interegular \
+      "llguidance>=0.7.11,<0.8.0" \
+      modelscope \
+      msgspec \
+      nvidia-ml-py \
+      openai-harmony==0.0.4 \
+      "openai>=2.25.0,<3" \
+      orjson \
+      outlines==0.1.11 \
+      partial_json_parser \
+      pillow \
+      "prometheus-client>=0.20.0" \
+      py-spy \
+      pybase64 \
+      "pyzmq>=25.1.2" \
+      python-multipart \
+      scipy \
+      sentencepiece \
+      setproctitle \
+      tiktoken \
+      timm==1.0.16 \
+      uvicorn \
+      uvloop \
+      watchfiles \
+      "xgrammar==0.2.7" && \
+    pip install --no-cache-dir --no-build-isolation --no-deps ./python && \
     cd sgl-kernel && cp pyproject_rocm.toml pyproject.toml && rm -rf build && \
     sed -i 's|f"--amdgpu-target={amdgpu_target}"|"--offload-arch=gfx942", "--offload-arch=gfx950"|' setup_rocm.py && \
     sed -i '/amdgpu_target not in \["gfx942", "gfx950"\]/,/sys.exit(1)/d' setup_rocm.py && \
