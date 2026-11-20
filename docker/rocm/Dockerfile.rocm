@@ -224,6 +224,14 @@ RUN sed -i \
 
 ENV NVTE_USE_GROUPED_GEMM_TRITON=1
 ENV NCCL_DEBUG=ERROR
+# RCCL tuning from pipelines/verl/Dockerfile. The 4-GPU activation-offload
+# tests timed out in reduce_scatter on this primus base; these are the
+# pipeline image's RCCL settings.
+ENV NCCL_MIN_NCHANNELS=112
+ENV HSA_NO_SCRATCH_RECLAIM=1
+ENV HSA_ENABLE_SCRATCH_ASYNC_RECLAIM=0
+ENV HIP_FORCE_DEV_KERNARG=1
+ENV GPU_USE_DEVICE_QUEUE=1
 ENV ROCPROFILER_LOG_LEVEL=fatal
 ENV HSA_ENABLE_IPC_MODE_LEGACY=1
 ENV PYTORCH_ALLOC_CONF=expandable_segments:True
@@ -244,6 +252,11 @@ RUN SP="$(python -c 'import site; print(site.getsitepackages()[0])')" \
         "$(python -c 'import rocm_sdk, os; print(os.path.dirname(rocm_sdk.__file__))')/__init__.py"
 RUN apt-get update && apt-get install -y --no-install-recommends vim \
     && rm -rf /var/lib/apt/lists/*
+
+# PD-disaggregation tests import gguf. Same install as pipelines/verl/Dockerfile,
+# constrained so pip cannot replace the primus ROCm torch.
+RUN pip install --no-cache-dir -c /tmp/rocm-constraints.txt gguf \
+    && python3 -c "import gguf; print('gguf', getattr(gguf, '__version__', 'ok'))"
 
 # Fail if any later pip step left vLLM with unmet requirements (e.g. a transformers downgrade).
 RUN ! pip check 2>/dev/null | grep -E '^vllm '
