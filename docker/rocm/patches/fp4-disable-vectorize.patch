@@ -1,0 +1,13 @@
+diff --git a/verl/utils/qat/fp4.py b/verl/utils/qat/fp4.py
+--- a/verl/utils/qat/fp4.py
++++ b/verl/utils/qat/fp4.py
+@@ -23,6 +23,9 @@ import torch
+ tilelang.set_log_level("WARNING")
+ pass_configs = {
+     tilelang.PassConfigKey.TL_DISABLE_WARP_SPECIALIZED: True,
++    # HIP codegen rejects an 8-lane index ramp, and its FP4 vector types are
++    # packed nibbles, so the MXFP4 store has to stay scalar.
++    tilelang.PassConfigKey.TIR_DISABLE_VECTORIZE: True,
+ }
+ 
+ __all__ = ["MXFP4_GROUP_SIZE", "fp4_grouped_fake_quant", "fp4_quant"]

@@ -1,0 +1,24 @@
+--- a/tilelang/src/tl_templates/hip/hip_fp4.h	2026-11-13 16:22:47.488190800 +0000
++++ b/tilelang/src/tl_templates/hip/hip_fp4.h	2026-11-13 16:22:47.488190800 +0000
+@@ -2,11 +2,10 @@
+ 
+ #include "common.h"
+ 
+-// FP4 E2M1 support for AMD gfx950 (CDNA4 / MI350).
+-// All device types and conversion helpers are guarded by __gfx950__ so that
+-// this header is safe to include on any ROCm target but only activates on
+-// CDNA4.  The CUDA equivalent is tl_templates/cuda/cuda_fp4.h.
+-#if defined(__gfx950__)
++// FP4 E2M1 support. Conversions are software (no CDNA4 instruction), so the
++// types are enabled on gfx942 (MI300) as well as gfx950 (MI350). The CUDA
++// equivalent is tl_templates/cuda/cuda_fp4.h.
++#if defined(__gfx942__) || defined(__gfx950__)
+ 
+ #include <stdint.h>
+ 
+@@ -255,4 +254,4 @@
+   }
+ }
+ 
+-#endif // defined(__gfx950__)
++#endif // defined(__gfx942__) || defined(__gfx950__)

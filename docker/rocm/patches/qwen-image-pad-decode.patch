@@ -1,0 +1,42 @@
+--- a/verl/experimental/agent_loop/agent_loop.py	2026-11-13 21:35:28.402196905 +0000
++++ b/verl/experimental/agent_loop/agent_loop.py	2026-11-13 21:35:28.402196905 +0000
+@@ -971,7 +971,10 @@
+         # will not strip them, and re-feeding the already-expanded text to the
+         # processor triggers a double-expansion error. Collapsing at the token-id
+-        # level (using the processor-resolved placeholder ids) is model-agnostic
+-        # and leaves the well-behaved (special-token) placeholders untouched.
++        # level (using the processor-resolved placeholder ids) is model-agnostic.
++        # Placeholders that ARE special tokens (Qwen ``<|image_pad|>``) are
++        # removed by ``skip_special_tokens=True``. Keep those ids and still
++        # drop every other special token, so the processor sees one
++        # placeholder per media item.
+         image_token_id = get_processor_token_id(self.processor, "image")
+         video_token_id = get_processor_token_id(self.processor, "video")
+         collapse_ids = {t for t in (image_token_id, video_token_id) if t is not None}
+@@ -981,7 +984,25 @@
+                 continue
+             collapsed_ids.append(token_id)
+             prev_id = token_id
+-        current_text = self.tokenizer.decode(collapsed_ids, skip_special_tokens=True)
++        special_ids = set(self.tokenizer.all_special_ids)
++        keep_ids = collapse_ids & special_ids
++        if not keep_ids:
++            current_text = self.tokenizer.decode(collapsed_ids, skip_special_tokens=True)
++        else:
++            pieces, buf = [], []
++            for token_id in collapsed_ids:
++                if token_id in keep_ids:
++                    if buf:
++                        pieces.append(self.tokenizer.decode(buf, skip_special_tokens=True))
++                        buf = []
++                    pieces.append(self.tokenizer.decode([token_id], skip_special_tokens=False))
++                elif token_id in special_ids:
++                    continue
++                else:
++                    buf.append(token_id)
++            if buf:
++                pieces.append(self.tokenizer.decode(buf, skip_special_tokens=True))
++            current_text = "".join(pieces)
+ 
+         multi_modal_inputs = build_multimodal_processor_inputs(
+             self.processor,

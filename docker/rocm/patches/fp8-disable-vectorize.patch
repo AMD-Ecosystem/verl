@@ -1,0 +1,13 @@
+--- a/verl/utils/qat/fp8.py	2026-11-13 16:22:47.497190708 +0000
++++ b/verl/utils/qat/fp8.py	2026-11-13 16:22:47.497190708 +0000
+@@ -25,6 +25,10 @@
+ tilelang.set_log_level("WARNING")
+ pass_configs = {
+     tilelang.PassConfigKey.TL_DISABLE_WARP_SPECIALIZED: True,
++    # Vectorized FP8 casts go through the hardware packed converters, which
++    # on gfx94x emit FNUZ. Scalar casts use fp8_e4_t(float), which stores
++    # OCP E4M3 bits on those GPUs.
++    tilelang.PassConfigKey.TIR_DISABLE_VECTORIZE: True,
+ }
+ 
+ __all__ = ["fp8_grouped_fake_quant", "fp8_quant"]

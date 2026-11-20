@@ -1,0 +1,14 @@
+diff --git a/verl/utils/qat/fp4.py b/verl/utils/qat/fp4.py
+--- a/verl/utils/qat/fp4.py
++++ b/verl/utils/qat/fp4.py
+@@ -51,7 +51,9 @@ def _round_up_to_power_of_two(value):
+ 
+ def _mxfp4_scale(amax):
+     """Match DeepSeek-V4's FP4 UE8M0 scale recipe."""
+-    scale = T.max(amax, 6.0 * (2.0**-126)) * (1.0 / 6.0)
++    # Divide by 6. A multiplied reciprocal is printed back as a decimal that
++    # rounds high, and the E8M0 cast then ceilings to the next power of two.
++    scale = T.max(amax, 6.0 * (2.0**-126)) / 6.0
+     return _round_up_to_power_of_two(scale)
+ 
+ 

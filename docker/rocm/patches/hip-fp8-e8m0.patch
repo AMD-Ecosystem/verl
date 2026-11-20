@@ -1,0 +1,45 @@
+diff -ruN tilelang/src/tl_templates/hip/hip_fp8.h tilelang/src/tl_templates/hip/hip_fp8.h
+--- a/tilelang/src/tl_templates/hip/hip_fp8.h	2026-11-05 15:47:23.308718058 -0500
++++ b/tilelang/src/tl_templates/hip/hip_fp8.h	2026-11-05 15:47:23.312718087 -0500
+@@ -98,9 +98,38 @@
+     return static_cast<float>(static_cast<hip_fp8_e5_t>(*this));
+   }
+ };
+-// Note: E8M0 types are not supported in current HIP version
+-// using fp8_e8_t = __hip_fp8_e8m0_fnuz;
+-// using fp8_e8_2_t = __hip_fp8x2_e8m0_fnuz;
++// __hip_fp8_e8m0 is the ROCm E8M0 type. Codegen uses scalar fp8_e8_t and
++// .x/.y/.z/.w on the vector structs below.
++using fp8_e8_t = __hip_fp8_e8m0;
++
++struct __align__(2) fp8_e8_2_t {
++  fp8_e8_t x;
++  fp8_e8_t y;
++};
++
++struct __align__(4) fp8_e8_4_t {
++  fp8_e8_t x;
++  fp8_e8_t y;
++  fp8_e8_t z;
++  fp8_e8_t w;
++};
++
++__device__ fp8_e8_2_t make_fp8_e8_2_t(fp8_e8_t x, fp8_e8_t y) {
++  fp8_e8_2_t result;
++  result.x = x;
++  result.y = y;
++  return result;
++}
++
++__device__ fp8_e8_4_t make_fp8_e8_4_t(fp8_e8_t x, fp8_e8_t y, fp8_e8_t z,
++                                      fp8_e8_t w) {
++  fp8_e8_4_t result;
++  result.x = x;
++  result.y = y;
++  result.z = z;
++  result.w = w;
++  return result;
++}
+ 
+ // Simple wrapper that provides member access for generated code
+ struct __align__(4) fp8_e4_4_t {
