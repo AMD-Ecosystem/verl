@@ -224,17 +224,10 @@ RUN sed -i \
 
 ENV NVTE_USE_GROUPED_GEMM_TRITON=1
 ENV NCCL_DEBUG=ERROR
-# RCCL tuning from pipelines/verl/Dockerfile. The 4-GPU activation-offload
-# tests timed out in reduce_scatter on this primus base; these are the
-# pipeline image's RCCL settings.
-ENV NCCL_MIN_NCHANNELS=112
-ENV HSA_NO_SCRATCH_RECLAIM=1
-ENV HSA_ENABLE_SCRATCH_ASYNC_RECLAIM=0
-ENV HIP_FORCE_DEV_KERNARG=1
-ENV GPU_USE_DEVICE_QUEUE=1
 ENV ROCPROFILER_LOG_LEVEL=fatal
 ENV HSA_ENABLE_IPC_MODE_LEGACY=1
-ENV PYTORCH_ALLOC_CONF=expandable_segments:True
+# Do not set PYTORCH_ALLOC_CONF=expandable_segments:True in the image: on this base it
+# slows RCCL collectives on large tensors from milliseconds to minutes.
 ENV MIOPEN_DEBUG_FORCE_IMMED_MODE_FALLBACK=1
 # scikit-learn and joblib (imported via transformers) default KMP_INIT_AT_FORK to
 # FALSE. torch here uses the ROCm SDK's LLVM OpenMP, which then skips its at-fork
